@@ -7,11 +7,23 @@ import (
 
 	"university-erp-backend/internal/domain"
 	"university-erp-backend/internal/platform/apperrors"
+	"university-erp-backend/internal/platform/eventbus"
+	"university-erp-backend/internal/platform/outbox"
+
+	"gorm.io/gorm"
 )
 
-type Service struct{ repo *Repository }
+type Service struct {
+	repo   *Repository
+	bus    *eventbus.Bus
+	outbox *outbox.Writer
+	db     *gorm.DB
+}
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+func NewService(repo *Repository, bus *eventbus.Bus, ob *outbox.Writer, db *gorm.DB) *Service {
+	s := &Service{repo: repo, bus: bus, outbox: ob, db: db}
+	return s
+}
 
 func (s *Service) ListCycles(ctx context.Context) ([]domain.AdmissionCycle, error) {
 	return s.repo.ListCycles()
@@ -64,11 +76,25 @@ func (s *Service) Submit(ctx context.Context, a *domain.Applicant) error {
 	if a.FirstName == "" || a.Email == "" {
 		return apperrors.BadRequest("first name and email are required")
 	}
-	// Generate application number
 	count, _ := s.repo.CountApplicationNumber(a.CycleID)
 	a.ApplicationNumber = fmt.Sprintf("APP-%d-%04d", time.Now().Year(), count+1)
 	a.AppliedAt = time.Now()
-	return s.repo.CreateApplicant(a)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(a).Error; err != nil {
+			return err
+		}
+		return s.outbox.WriteEvent(tx, "Applicant", fmt.Sprintf("%d", a.ID),
+			eventbus.EventApplicationSubmitted,
+			map[string]interface{}{
+				"applicant_id":      a.ID,
+				"application_number": a.ApplicationNumber,
+				"email":             a.Email,
+				"cycle_id":          a.CycleID,
+			},
+		)
+	})
+	return txErr
 }
 func (s *Service) UpdateApplicant(ctx context.Context, id uint, a *domain.Applicant) error {
 	existing, err := s.repo.GetApplicant(id)
@@ -79,17 +105,59 @@ func (s *Service) UpdateApplicant(ctx context.Context, id uint, a *domain.Applic
 	a.ApplicationNumber = existing.ApplicationNumber
 	return s.repo.UpdateApplicant(a)
 }
+
+// UpdateStatus changes the applicant status and, if approved, publishes an outbox event
+// that triggers automatic student profile creation via the event bus.
 func (s *Service) UpdateStatus(ctx context.Context, id uint, statusID uint, changedBy uint) error {
-	if err := s.repo.UpdateApplicantStatus(id, statusID); err != nil {
-		return err
+	applicant, err := s.repo.GetApplicant(id)
+	if err != nil {
+		return apperrors.NotFound("applicant not found")
 	}
-	hist := &domain.ApplicationStatusHistory{
-		ApplicantID:   id,
-		StatusID:      statusID,
-		EffectiveFrom: time.Now(),
-	}
-	return s.repo.CreateStatusHistory(hist)
+
+	// Find the "APPROVED" status code
+	var approvedStatus domain.StatusCode
+	s.db.Where("module = ? AND code = ?", "admission", "APPROVED").First(&approvedStatus)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&domain.Applicant{}).Where("id = ?", id).Update("status_id", statusID).Error; err != nil {
+			return err
+		}
+		hist := &domain.ApplicationStatusHistory{
+			ApplicantID:   id,
+			StatusID:      statusID,
+			EffectiveFrom: time.Now(),
+		}
+		if err := tx.Create(hist).Error; err != nil {
+			return err
+		}
+
+		// If approved, emit ApplicationApproved event for auto student creation
+		if approvedStatus.ID != 0 && statusID == approvedStatus.ID {
+			programID := uint(0)
+			if applicant.ProgramID != nil {
+				programID = *applicant.ProgramID
+			}
+			return s.outbox.WriteEvent(tx, "Applicant", fmt.Sprintf("%d", id),
+				eventbus.EventApplicationApproved,
+				eventbus.ApplicationApprovedPayload{
+					ApplicantID: id,
+					ProgramID:   programID,
+					Email:       applicant.Email,
+					FirstName:   applicant.FirstName,
+					LastName:    applicant.LastName,
+					DateOfBirth: applicant.DateOfBirth.Format("2006-01-02"),
+					GenderID:    applicant.GenderID,
+					CategoryID:  applicant.CategoryID,
+					Phone:       applicant.Phone,
+					CycleID:     applicant.CycleID,
+				},
+			)
+		}
+		return nil
+	})
+	return txErr
 }
+
 func (s *Service) GetStatusHistory(ctx context.Context, id uint) ([]domain.ApplicationStatusHistory, error) {
 	return s.repo.GetStatusHistory(id)
 }
@@ -115,7 +183,22 @@ func (s *Service) AllocateSeat(ctx context.Context, sa *domain.SeatAllocation) e
 		return apperrors.BadRequest("applicant_id and cycle_id are required")
 	}
 	sa.AllocatedAt = time.Now()
-	return s.repo.CreateSeatAllocation(sa)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(sa).Error; err != nil {
+			return err
+		}
+		return s.outbox.WriteEvent(tx, "SeatAllocation", fmt.Sprintf("%d", sa.ID),
+			eventbus.EventSeatAllocated,
+			map[string]interface{}{
+				"allocation_id": sa.ID,
+				"applicant_id": sa.ApplicantID,
+				"cycle_id":     sa.CycleID,
+				"rank":         sa.AllocationRank,
+			},
+		)
+	})
+	return txErr
 }
 func (s *Service) GetSeatAllocation(ctx context.Context, applicantID uint) (*domain.SeatAllocation, error) {
 	sa, err := s.repo.GetSeatAllocation(applicantID)

@@ -2,15 +2,27 @@ package hrmod
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"university-erp-backend/internal/domain"
 	"university-erp-backend/internal/platform/apperrors"
+	"university-erp-backend/internal/platform/eventbus"
+	"university-erp-backend/internal/platform/outbox"
+
+	"gorm.io/gorm"
 )
 
-type Service struct{ repo *Repository }
+type Service struct {
+	repo   *Repository
+	bus    *eventbus.Bus
+	outbox *outbox.Writer
+	db     *gorm.DB
+}
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+func NewService(repo *Repository, bus *eventbus.Bus, ob *outbox.Writer, db *gorm.DB) *Service {
+	return &Service{repo: repo, bus: bus, outbox: ob, db: db}
+}
 
 // Lookups
 func (s *Service) ListDesignations(ctx context.Context) ([]domain.Designation, error) {
@@ -29,7 +41,7 @@ func (s *Service) CreateLeaveType(ctx context.Context, lt *domain.LeaveType) err
 	return s.repo.CreateLeaveType(lt)
 }
 
-// Employees
+// Employees - with outbox event on creation
 func (s *Service) ListEmployees(ctx context.Context, departmentID uint, page, pageSize int) ([]domain.Employee, int64, error) {
 	return s.repo.ListEmployees(departmentID, page, pageSize)
 }
@@ -60,7 +72,39 @@ func (s *Service) CreateEmployee(ctx context.Context, e *domain.Employee) error 
 		e.JoiningDate = time.Now()
 	}
 	e.IsActive = true
-	return s.repo.CreateEmployee(e)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(e).Error; err != nil {
+			return err
+		}
+		// Create department history if department assigned
+		if e.DepartmentID != nil {
+			hist := &domain.EmployeeDepartmentHistory{
+				EmployeeID:    e.ID,
+				DepartmentID:  *e.DepartmentID,
+				EffectiveFrom: e.JoiningDate,
+			}
+			if err := tx.Create(hist).Error; err != nil {
+				return err
+			}
+		}
+		designation := ""
+		if e.DesignationID != nil {
+			var d domain.Designation
+			tx.First(&d, *e.DesignationID)
+			designation = d.Name
+		}
+		return s.outbox.WriteEvent(tx, "Employee", fmt.Sprintf("%d", e.ID),
+			eventbus.EventEmployeeOnboarded,
+			eventbus.EmployeeOnboardedPayload{
+				EmployeeID:   e.ID,
+				UserID:       e.UserID,
+				DepartmentID: e.DepartmentID,
+				Designation:  designation,
+			},
+		)
+	})
+	return txErr
 }
 func (s *Service) UpdateEmployee(ctx context.Context, id uint, e *domain.Employee) error {
 	existing, err := s.repo.GetEmployee(id)
@@ -96,11 +140,8 @@ func (s *Service) UpsertStaffProfile(ctx context.Context, st *domain.Staff) erro
 
 // Department History
 func (s *Service) TransferDepartment(ctx context.Context, employeeID, deptID uint) error {
-	// Close current history
-	s.repo.db.Exec(`UPDATE hr.employee_department_history SET effective_to = ? WHERE employee_id = ? AND effective_to IS NULL`, time.Now(), employeeID)
-	// Update employee record
-	s.repo.db.Model(&domain.Employee{}).Where("id = ?", employeeID).Update("department_id", deptID)
-	// Create new history
+	s.db.Exec(`UPDATE hr.employee_department_history SET effective_to = ? WHERE employee_id = ? AND effective_to IS NULL`, time.Now(), employeeID)
+	s.db.Model(&domain.Employee{}).Where("id = ?", employeeID).Update("department_id", deptID)
 	hist := &domain.EmployeeDepartmentHistory{
 		EmployeeID:    employeeID,
 		DepartmentID:  deptID,
@@ -130,22 +171,51 @@ func (s *Service) CreateSalaryComponent(ctx context.Context, sc *domain.SalaryCo
 	return s.repo.CreateSalaryComponent(sc)
 }
 
-// Payroll
+// Payroll - with outbox event for finance integration
 func (s *Service) RunPayroll(ctx context.Context, employeeID uint, month time.Time, processedBy uint) (*domain.PayrollRun, error) {
 	sal, err := s.repo.GetCurrentSalary(employeeID)
 	if err != nil {
 		return nil, apperrors.BadRequest("no active salary found for employee")
 	}
-	pr := &domain.PayrollRun{
-		EmployeeID:  employeeID,
-		Month:       month,
-		GrossPay:    sal.BasePay,
-		NetPay:      sal.NetSalary,
-		ProcessedAt: time.Now(),
-		ProcessedBy: &processedBy,
+
+	// Calculate deductions
+	var totalDeductions float64
+	details, _ := s.repo.GetSalaryDetails(sal.ID)
+	for _, d := range details {
+		var comp domain.SalaryComponent
+		s.db.First(&comp, d.SalaryComponentID)
+		if comp.Type == "deduction" {
+			totalDeductions += d.Amount
+		}
 	}
-	if err := s.repo.CreatePayrollRun(pr); err != nil {
-		return nil, err
+
+	pr := &domain.PayrollRun{
+		EmployeeID:      employeeID,
+		Month:            month,
+		GrossPay:         sal.BasePay,
+		TotalDeductions:  totalDeductions,
+		NetPay:           sal.NetSalary,
+		ProcessedAt:      time.Now(),
+		ProcessedBy:      &processedBy,
+	}
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(pr).Error; err != nil {
+			return err
+		}
+		return s.outbox.WriteEvent(tx, "PayrollRun", fmt.Sprintf("%d", pr.ID),
+			eventbus.EventPayrollProcessed,
+			eventbus.PayrollProcessedPayload{
+				PayrollID:  pr.ID,
+				EmployeeID: pr.EmployeeID,
+				Month:      pr.Month.Format("2006-01"),
+				GrossPay:   pr.GrossPay,
+				NetPay:     pr.NetPay,
+			},
+		)
+	})
+	if txErr != nil {
+		return nil, txErr
 	}
 	return pr, nil
 }
@@ -162,7 +232,23 @@ func (s *Service) RequestLeave(ctx context.Context, req *domain.LeaveRequest) er
 		return apperrors.BadRequest("employee_id and leave_type_id are required")
 	}
 	req.CreatedAt = time.Now()
-	return s.repo.CreateLeaveRequest(req)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(req).Error; err != nil {
+			return err
+		}
+		return s.outbox.WriteEvent(tx, "LeaveRequest", fmt.Sprintf("%d", req.ID),
+			eventbus.EventLeaveRequested,
+			map[string]interface{}{
+				"request_id":   req.ID,
+				"employee_id":  req.EmployeeID,
+				"leave_type_id": req.LeaveTypeID,
+				"start_date":   req.StartDate,
+				"end_date":     req.EndDate,
+			},
+		)
+	})
+	return txErr
 }
 func (s *Service) ListLeaveRequests(ctx context.Context, employeeID uint, page, pageSize int) ([]domain.LeaveRequest, int64, error) {
 	return s.repo.ListLeaveRequests(employeeID, page, pageSize)
@@ -175,7 +261,29 @@ func (s *Service) ApproveLeave(ctx context.Context, id, approvedBy uint) error {
 	now := time.Now()
 	req.ApprovedBy = &approvedBy
 	req.ApprovedAt = &now
-	return s.repo.UpdateLeaveRequest(req)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(req).Error; err != nil {
+			return err
+		}
+		// Update leave balance
+		var lb domain.LeaveBalance
+		if err := tx.Where("employee_id = ? AND leave_type_id = ? AND year = ?",
+			req.EmployeeID, req.LeaveTypeID, now.Year()).First(&lb).Error; err == nil {
+			days := req.EndDate.Sub(req.StartDate).Hours() / 24
+			lb.UsedQuota += days
+			tx.Save(&lb)
+		}
+		return s.outbox.WriteEvent(tx, "LeaveRequest", fmt.Sprintf("%d", req.ID),
+			eventbus.EventLeaveApproved,
+			map[string]interface{}{
+				"request_id":   req.ID,
+				"employee_id":  req.EmployeeID,
+				"approved_by":  approvedBy,
+			},
+		)
+	})
+	return txErr
 }
 func (s *Service) RejectLeave(ctx context.Context, id uint) error {
 	req, err := s.repo.GetLeaveRequest(id)

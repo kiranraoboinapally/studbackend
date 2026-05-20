@@ -2,15 +2,27 @@ package exammod
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"university-erp-backend/internal/domain"
 	"university-erp-backend/internal/platform/apperrors"
+	"university-erp-backend/internal/platform/eventbus"
+	"university-erp-backend/internal/platform/outbox"
+
+	"gorm.io/gorm"
 )
 
-type Service struct{ repo *Repository }
+type Service struct {
+	repo   *Repository
+	bus    *eventbus.Bus
+	outbox *outbox.Writer
+	db     *gorm.DB
+}
 
-func NewService(repo *Repository) *Service { return &Service{repo: repo} }
+func NewService(repo *Repository, bus *eventbus.Bus, ob *outbox.Writer, db *gorm.DB) *Service {
+	return &Service{repo: repo, bus: bus, outbox: ob, db: db}
+}
 
 // Components
 func (s *Service) ListComponents(ctx context.Context, subjectID uint) ([]domain.ExamComponent, error) {
@@ -54,7 +66,7 @@ func (s *Service) UpdateSchedule(ctx context.Context, id uint, sch *domain.ExamS
 	return s.repo.UpdateSchedule(sch)
 }
 
-// Results
+// Results - with outbox event on publish
 func (s *Service) GetStudentResults(ctx context.Context, studentID, termID uint) ([]domain.Result, error) {
 	return s.repo.GetStudentResults(studentID, termID)
 }
@@ -62,7 +74,6 @@ func (s *Service) EnterResult(ctx context.Context, res *domain.Result) error {
 	if res.StudentID == 0 || res.SubjectID == 0 {
 		return apperrors.BadRequest("student_id and subject_id are required")
 	}
-	// Calculate grade based on marks
 	percentage := (res.MarksObtained / res.MaxMarks) * 100
 	res.Grade, res.GradePoint, res.IsPassed = calculateGrade(percentage)
 	return s.repo.CreateResult(res)
@@ -87,7 +98,24 @@ func (s *Service) BulkEnterResults(ctx context.Context, results []domain.Result)
 	return s.repo.BulkCreateResults(results)
 }
 func (s *Service) PublishResults(ctx context.Context, termID, publishedBy uint) error {
-	return s.repo.PublishResults(termID, publishedBy)
+	// Count unpublished results
+	var count int64
+	s.db.Model(&domain.Result{}).Where("academic_term_id = ? AND published_at IS NULL", termID).Count(&count)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`UPDATE exam.results SET published_at = CURRENT_TIMESTAMP, published_by = ? WHERE academic_term_id = ? AND published_at IS NULL`, publishedBy, termID).Error; err != nil {
+			return err
+		}
+		return s.outbox.WriteEvent(tx, "ExamResult", fmt.Sprintf("term-%d", termID),
+			eventbus.EventResultPublished,
+			eventbus.ResultPublishedPayload{
+				TermID:      termID,
+				PublishedBy: publishedBy,
+				ResultCount: int(count),
+			},
+		)
+	})
+	return txErr
 }
 
 // Component Marks
@@ -98,13 +126,29 @@ func (s *Service) GetComponentMarks(ctx context.Context, resultID uint) ([]domai
 	return s.repo.GetComponentMarks(resultID)
 }
 
-// Revaluation
+// Revaluation - with outbox event
 func (s *Service) RequestRevaluation(ctx context.Context, req *domain.RevaluationRequest) error {
 	if req.ResultID == 0 || req.StudentID == 0 {
 		return apperrors.BadRequest("result_id and student_id are required")
 	}
 	req.RequestDate = time.Now()
-	return s.repo.CreateRevaluation(req)
+
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(req).Error; err != nil {
+			return err
+		}
+		return s.outbox.WriteEvent(tx, "Revaluation", fmt.Sprintf("%d", req.ID),
+			eventbus.EventRevaluationRequested,
+			map[string]interface{}{
+				"request_id":  req.ID,
+				"result_id":   req.ResultID,
+				"student_id":  req.StudentID,
+				"subject_id":  req.SubjectID,
+				"fee_paid":    req.FeePaid,
+			},
+		)
+	})
+	return txErr
 }
 func (s *Service) ListRevaluations(ctx context.Context, studentID uint) ([]domain.RevaluationRequest, error) {
 	return s.repo.ListRevaluations(studentID)
@@ -141,7 +185,6 @@ func (s *Service) GetCGPA(ctx context.Context, studentID uint) (*SGPAResult, err
 	return s.repo.GetCGPA(studentID)
 }
 
-// Grade calculation helper
 func calculateGrade(percentage float64) (string, float64, bool) {
 	switch {
 	case percentage >= 90:

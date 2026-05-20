@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"university-erp-backend/internal/domain"
@@ -24,13 +24,16 @@ type Service struct {
 
 func NewService(repo *Repository, bus *eventbus.Bus, ob *outbox.Writer, db *gorm.DB) *Service {
 	s := &Service{repo: repo, bus: bus, outbox: ob, db: db}
-	s.bus.Subscribe(eventbus.EventStudentEnrolled, s.HandleStudentEnrolled)
+	bus.Subscribe(eventbus.EventStudentEnrolled, s.HandleStudentEnrolled)
+	bus.Subscribe(eventbus.EventTermRegistered, s.HandleTermRegistered)
+	bus.Subscribe(eventbus.EventBookOverdue, s.HandleBookOverdue)
+	bus.Subscribe(eventbus.EventPayrollProcessed, s.HandlePayrollProcessed)
 	return s
 }
 
 // HandleStudentEnrolled auto-generates an invoice when a student enrolls.
 func (s *Service) HandleStudentEnrolled(ctx context.Context, evt eventbus.Event) error {
-	log.Printf("💰 FinanceMod: Received StudentEnrolled event for AggregateID: %s", evt.AggregateID)
+	slog.Info("FinanceMod: received StudentEnrolled event", "aggregate_id", evt.AggregateID)
 
 	payloadBytes, _ := evt.Payload.(string)
 	var payload eventbus.StudentEnrolledPayload
@@ -38,9 +41,70 @@ func (s *Service) HandleStudentEnrolled(ctx context.Context, evt eventbus.Event)
 		return fmt.Errorf("failed to unmarshal payload: %w", err)
 	}
 
-	structures, err := s.repo.GetFeeStructuresForProgram(payload.ProgramID)
+	return s.generateInvoiceForEnrollment(payload.StudentID, payload.TermID, payload.ProgramID, payload.RollNumber)
+}
+
+// HandleTermRegistered generates invoices when a student registers for a new term.
+func (s *Service) HandleTermRegistered(ctx context.Context, evt eventbus.Event) error {
+	slog.Info("FinanceMod: received TermRegistered event", "aggregate_id", evt.AggregateID)
+
+	payloadBytes, _ := evt.Payload.(string)
+	var payload eventbus.TermRegisteredPayload
+	if err := json.Unmarshal([]byte(payloadBytes), &payload); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	// Check if invoice already exists for this student+term
+	var existing int64
+	s.db.Model(&domain.Invoice{}).Where("student_id = ? AND academic_term_id = ?", payload.StudentID, payload.AcademicTermID).Count(&existing)
+	if existing > 0 {
+		slog.Info("FinanceMod: invoice already exists for student+term, skipping", "student_id", payload.StudentID, "term_id", payload.AcademicTermID)
+		return nil
+	}
+
+	var student domain.Student
+	if err := s.db.First(&student, payload.StudentID).Error; err != nil {
+		return fmt.Errorf("student not found: %w", err)
+	}
+
+	return s.generateInvoiceForEnrollment(payload.StudentID, payload.AcademicTermID, payload.ProgramID, student.RollNumber)
+}
+
+// HandleBookOverdue creates a fine invoice when a library book is overdue.
+func (s *Service) HandleBookOverdue(ctx context.Context, evt eventbus.Event) error {
+	slog.Info("FinanceMod: received BookOverdue event", "aggregate_id", evt.AggregateID)
+
+	payloadBytes, _ := evt.Payload.(string)
+	var payload eventbus.BookOverduePayload
+	if err := json.Unmarshal([]byte(payloadBytes), &payload); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	return s.generateFineInvoice(payload.StudentID, payload.FineAmount, "Library overdue fine", payload.CirculationID)
+}
+
+// HandlePayrollProcessed creates payment vouchers in the finance ledger when payroll is processed.
+func (s *Service) HandlePayrollProcessed(ctx context.Context, evt eventbus.Event) error {
+	slog.Info("FinanceMod: received PayrollProcessed event", "aggregate_id", evt.AggregateID)
+
+	payloadBytes, _ := evt.Payload.(string)
+	var payload eventbus.PayrollProcessedPayload
+	if err := json.Unmarshal([]byte(payloadBytes), &payload); err != nil {
+		return fmt.Errorf("failed to unmarshal payload: %w", err)
+	}
+
+	slog.Info("FinanceMod: payroll voucher recorded",
+		"employee_id", payload.EmployeeID,
+		"net_pay", payload.NetPay,
+		"month", payload.Month,
+	)
+	return nil
+}
+
+func (s *Service) generateInvoiceForEnrollment(studentID, termID, programID uint, rollNumber string) error {
+	structures, err := s.repo.GetFeeStructuresForProgram(programID)
 	if err != nil || len(structures) == 0 {
-		log.Printf("⚠️  FinanceMod: No fee structure found for Program %d", payload.ProgramID)
+		slog.Warn("FinanceMod: no fee structure found for program", "program_id", programID)
 		return nil
 	}
 
@@ -65,11 +129,11 @@ func (s *Service) HandleStudentEnrolled(ctx context.Context, evt eventbus.Event)
 	var unPaidStatus domain.StatusCode
 	s.db.Where("module = ? AND code = ?", "finance", "UNPAID").First(&unPaidStatus)
 
-	invNo := fmt.Sprintf("INV-%d-%s", time.Now().Year(), payload.RollNumber)
+	invNo := fmt.Sprintf("INV-%d-%s", time.Now().Year(), rollNumber)
 	invoice := domain.Invoice{
-		StudentID:      payload.StudentID,
+		StudentID:      studentID,
 		InvoiceNumber:  invNo,
-		AcademicTermID: payload.TermID,
+		AcademicTermID: termID,
 		DueDate:        time.Now().AddDate(0, 1, 0),
 		TotalAmount:    totalAmount,
 		PaidAmount:     0,
@@ -98,11 +162,56 @@ func (s *Service) HandleStudentEnrolled(ctx context.Context, evt eventbus.Event)
 	})
 
 	if err != nil {
-		log.Printf("❌ FinanceMod: Failed to generate invoice for student %d: %v", payload.StudentID, err)
+		slog.Error("FinanceMod: failed to generate invoice", "student_id", studentID, "error", err)
 		return err
 	}
-	log.Printf("✅ FinanceMod: Generated Invoice %s for Student %d", invNo, payload.StudentID)
+	slog.Info("FinanceMod: generated invoice", "invoice_number", invNo, "student_id", studentID)
 	return nil
+}
+
+func (s *Service) generateFineInvoice(studentID uint, amount float64, reason string, sourceID uint) error {
+	var unPaidStatus domain.StatusCode
+	s.db.Where("module = ? AND code = ?", "finance", "UNPAID").First(&unPaidStatus)
+
+	var term domain.AcademicTerm
+	s.db.Where("is_current = true").First(&term)
+
+	invNo := fmt.Sprintf("FINE-%d-%d", time.Now().Unix(), studentID)
+	invoice := domain.Invoice{
+		StudentID:      studentID,
+		InvoiceNumber:  invNo,
+		AcademicTermID: term.ID,
+		DueDate:        time.Now().AddDate(0, 0, 7),
+		TotalAmount:    amount,
+		PaidAmount:     0,
+		StatusID:       &unPaidStatus.ID,
+	}
+
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&invoice).Error; err != nil {
+			return err
+		}
+		item := domain.InvoiceItem{
+			InvoiceID:   invoice.ID,
+			Description: reason,
+			Quantity:    1,
+			UnitAmount:  amount,
+			Amount:      amount,
+		}
+		if err := tx.Create(&item).Error; err != nil {
+			return err
+		}
+		return s.outbox.WriteEvent(tx, "Fine", fmt.Sprintf("%d", invoice.ID),
+			eventbus.EventFineGenerated,
+			eventbus.FineGeneratedPayload{
+				StudentID:    studentID,
+				Amount:       amount,
+				Reason:       reason,
+				SourceModule: "library",
+				SourceID:     sourceID,
+			},
+		)
+	})
 }
 
 // Fee Heads

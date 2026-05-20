@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -14,7 +15,16 @@ import (
 
 	"university-erp-backend/internal/config"
 	authmod "university-erp-backend/internal/modules/auth"
+	coremod "university-erp-backend/internal/modules/core"
 	studentmod "university-erp-backend/internal/modules/student"
+	admissionsmod "university-erp-backend/internal/modules/admissions"
+	academicmod "university-erp-backend/internal/modules/academic"
+	financemod "university-erp-backend/internal/modules/finance"
+	hrmod "university-erp-backend/internal/modules/hr"
+	exammod "university-erp-backend/internal/modules/exam"
+	librarymod "university-erp-backend/internal/modules/library"
+	hostelmod "university-erp-backend/internal/modules/hostel"
+	transportmod "university-erp-backend/internal/modules/transport"
 	"university-erp-backend/internal/platform/auth"
 	"university-erp-backend/internal/platform/database"
 	"university-erp-backend/internal/platform/eventbus"
@@ -25,7 +35,7 @@ import (
 func main() {
 	// Load .env
 	if err := godotenv.Load(); err != nil {
-		log.Println("Warning: .env file not found, using system env")
+		slog.Warn("no .env file found, using system env")
 	}
 
 	// Load config
@@ -40,75 +50,132 @@ func main() {
 	outboxWriter := outbox.NewWriter(db)
 	outboxWorker := outbox.NewWorker(db, bus, cfg.OutboxPollInterval, cfg.OutboxBatchSize)
 
-	// Start outbox worker
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	outboxWorker.Start(ctx)
-
-	// Initialize repositories
+	// ─── Initialize Repositories ────────────────────────────────────────────────
 	authRepo := authmod.NewRepository(db)
+	coreRepo := coremod.NewRepository(db)
 	studentRepo := studentmod.NewRepository(db)
+	admissionsRepo := admissionsmod.NewRepository(db)
+	academicRepo := academicmod.NewRepository(db)
+	financeRepo := financemod.NewRepository(db)
+	hrRepo := hrmod.NewRepository(db)
+	examRepo := exammod.NewRepository(db)
+	libraryRepo := librarymod.NewRepository(db)
+	hostelRepo := hostelmod.NewRepository(db)
+	transportRepo := transportmod.NewRepository(db)
 
-	// Initialize services
+	// ─── Initialize Services ────────────────────────────────────────────────────
+	// Order matters: Finance & Student subscribe to events, so they must be
+	// initialized before publishers that emit those events start up.
+	// Since all subscriptions happen in NewService constructors, and the
+	// outbox worker hasn't started yet, initialization order is safe.
+
+	coreService := coremod.NewService(coreRepo)
 	authService := authmod.NewService(authRepo, jwtMgr, bus, outboxWriter, db)
 	studentService := studentmod.NewService(studentRepo, bus, outboxWriter, db)
+	admissionsService := admissionsmod.NewService(admissionsRepo, bus, outboxWriter, db)
+	academicService := academicmod.NewService(academicRepo, bus, outboxWriter, db)
+	financeService := financemod.NewService(financeRepo, bus, outboxWriter, db)
+	hrService := hrmod.NewService(hrRepo, bus, outboxWriter, db)
+	examService := exammod.NewService(examRepo, bus, outboxWriter, db)
+	libraryService := librarymod.NewService(libraryRepo, bus, outboxWriter, db)
+	hostelService := hostelmod.NewService(hostelRepo, bus, outboxWriter, db)
+	transportService := transportmod.NewService(transportRepo, bus, outboxWriter, db)
 
-	// Initialize handlers
+	// ─── Initialize Handlers ───────────────────────────────────────────────────
+	coreHandler := coremod.NewHandler(coreService)
 	authHandler := authmod.NewHandler(authService)
 	studentHandler := studentmod.NewHandler(studentService)
+	admissionsHandler := admissionsmod.NewHandler(admissionsService)
+	academicHandler := academicmod.NewHandler(academicService)
+	financeHandler := financemod.NewHandler(financeService)
+	hrHandler := hrmod.NewHandler(hrService)
+	examHandler := exammod.NewHandler(examService)
+	libraryHandler := librarymod.NewHandler(libraryService)
+	hostelHandler := hostelmod.NewHandler(hostelService)
+	transportHandler := transportmod.NewHandler(transportService)
 
-	// Setup Router
+	// ─── Setup Router ───────────────────────────────────────────────────────────
 	r := mux.NewRouter()
 
-	// Apply middleware
+	// Global middleware
 	r.Use(middleware.RequestLogger)
 	r.Use(middleware.CORS([]string{"*"}))
 
-	// Create auth middleware
+	// Auth middleware
 	authMW := middleware.Authenticate(jwtMgr)
 
-	// Register routes
+	// Register all module routes
+	coreHandler.RegisterRoutes(r, authMW)
 	authHandler.RegisterRoutes(r, authMW)
 	studentHandler.RegisterRoutes(r, authMW)
+	admissionsHandler.RegisterRoutes(r, authMW)
+	academicHandler.RegisterRoutes(r, authMW)
+	financeHandler.RegisterRoutes(r, authMW)
+	hrHandler.RegisterRoutes(r, authMW)
+	examHandler.RegisterRoutes(r, authMW)
+	libraryHandler.RegisterRoutes(r, authMW)
+	hostelHandler.RegisterRoutes(r, authMW)
+	transportHandler.RegisterRoutes(r, authMW)
 
-	// Get port
+	// ─── Start Outbox Worker ────────────────────────────────────────────────────
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		outboxWorker.Start(ctx)
+	}()
+
+	slog.Info("transactional outbox worker started",
+		"poll_interval_sec", cfg.OutboxPollInterval,
+		"batch_size", cfg.OutboxBatchSize,
+	)
+
+	// ─── Start HTTP Server ──────────────────────────────────────────────────────
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = cfg.ServerPort
 	}
 
-	// Start server
 	srv := &http.Server{
-		Addr:    "0.0.0.0:" + port,
-		Handler: r,
+		Addr:         "0.0.0.0:" + port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
-	// Graceful shutdown
+	wg.Add(1)
 	go func() {
-		log.Printf("🚀 University ERP Backend running on :%s", port)
-		log.Println("📚 API Base: http://localhost:" + port + "/api/v1")
+		defer wg.Done()
+		slog.Info("university ERP backend starting", "port", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("❌ Server failed: %v", err)
+			slog.Error("server failed", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	// Wait for interrupt signal
+	// ─── Graceful Shutdown ──────────────────────────────────────────────────────
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	sig := <-quit
 
-	log.Println("🛑 Shutting down server...")
+	slog.Info("shutdown signal received", "signal", sig.String())
 
-	// Graceful shutdown with timeout
-	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Stop accepting new HTTP requests
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
 
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("❌ Server forced to shutdown: %v", err)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server forced shutdown", "error", err)
 	}
 
 	// Stop outbox worker
 	cancel()
 
-	log.Println("✅ Server stopped")
+	// Wait for all goroutines to finish
+	wg.Wait()
+
+	slog.Info("server stopped gracefully")
 }
