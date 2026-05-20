@@ -30,6 +30,7 @@ import (
 	"university-erp-backend/internal/platform/eventbus"
 	"university-erp-backend/internal/platform/middleware"
 	"university-erp-backend/internal/platform/outbox"
+	"university-erp-backend/internal/platform/swagger"
 )
 
 func main() {
@@ -116,6 +117,12 @@ func main() {
 	libraryHandler.RegisterRoutes(r, authMW)
 	hostelHandler.RegisterRoutes(r, authMW)
 	transportHandler.RegisterRoutes(r, authMW)
+
+	// ─── Swagger UI ─────────────────────────────────────────────────────────────
+	swaggerHandler := swagger.NewHandler("docs/swagger.yaml")
+	swaggerMux := http.NewServeMux()
+	swaggerHandler.RegisterRoutes(swaggerMux)
+	r.PathPrefix("/swagger").Handler(swaggerMux)
 
 	// ─── Start Outbox Worker ────────────────────────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())

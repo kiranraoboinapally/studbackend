@@ -1,0 +1,4272 @@
+openapi: 3.0.3
+info:
+  title: University ERP Backend API
+  description: |
+    Production-ready University ERP system with 11 modules covering
+    Auth, Core, Student, Admissions, Academic, Finance, HR, Exam,
+    Library, Hostel, and Transport.
+
+    **Architecture**: Transactional Outbox Pattern, Scoped RBAC,
+    Cross-Module Event Workflows, Structured Logging.
+  version: 1.0.0
+  contact:
+    name: University ERP Team
+    email: dev@university-erp.edu
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+securityDefinitions:
+  BearerAuth:
+    type: apiKey
+    in: header
+    name: Authorization
+    description: "JWT token format: Bearer <token>"
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Auth
+    description: Authentication and user management
+  - name: Core
+    description: Universities, campuses, departments, lookups
+  - name: Student
+    description: Student profiles, guardians, grievances
+  - name: Admissions
+    description: Admission cycles, applicants, seat allocation
+  - name: Academic
+    description: Terms, programs, subjects, registrations, attendance
+  - name: Finance
+    description: Invoices, payments, scholarships, refunds
+  - name: HR
+    description: Employees, payroll, leaves, recruitment
+  - name: Exam
+    description: Schedules, results, revaluation, supplementary
+  - name: Library
+    description: Books, circulations, fines, reservations
+  - name: Hostel
+    description: Hostels, rooms, allocations, mess bills, maintenance
+  - name: Transport
+    description: Buses, routes, passes, vehicle maintenance
+
+paths:
+  # ─── AUTH ────────────────────────────────────────────────────────────────────
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: admin1
+                password:
+                  type: string
+                  example: secret123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  user_id:
+                    type: integer
+                  username:
+                    type: string
+                  roles:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          description: Invalid credentials
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register new user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username:
+                  type: string
+                  example: student1
+                email:
+                  type: string
+                  example: student1@university.edu
+                password:
+                  type: string
+                  minLength: 6
+                  example: secret123
+                role_name:
+                  type: string
+                  default: student
+                  enum: [admin, registrar, finance, faculty, student]
+      responses:
+        '201':
+          description: User registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                  username:
+                    type: string
+                  email:
+                    type: string
+        '409':
+          description: Username or email already exists
+
+  /api/v1/auth/profile:
+    get:
+      tags: [Auth]
+      summary: Get current user profile
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                  username:
+                    type: string
+                  email:
+                    type: string
+                  roles:
+                    type: array
+                    items:
+                      type: string
+                  is_active:
+                    type: boolean
+
+  # ─── CORE ────────────────────────────────────────────────────────────────────
+  /api/v1/lookups/genders:
+    get:
+      tags: [Core]
+      summary: List genders
+      security: []
+      responses:
+        '200':
+          description: List of genders
+
+  /api/v1/lookups/categories:
+    get:
+      tags: [Core]
+      summary: List categories
+      security: []
+      responses:
+        '200':
+          description: List of categories
+
+  /api/v1/lookups/blood-groups:
+    get:
+      tags: [Core]
+      summary: List blood groups
+      security: []
+      responses:
+        '200':
+          description: List of blood groups
+
+  /api/v1/lookups/status-codes:
+    get:
+      tags: [Core]
+      summary: List status codes
+      security: []
+      parameters:
+        - name: module
+          in: query
+          schema:
+            type: string
+          description: Filter by module name
+      responses:
+        '200':
+          description: List of status codes
+
+  /api/v1/universities:
+    get:
+      tags: [Core]
+      summary: List universities
+      responses:
+        '200':
+          description: List of universities
+    post:
+      tags: [Core]
+      summary: Create university
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UniversityInput'
+      responses:
+        '201':
+          description: University created
+
+  /api/v1/universities/{id}:
+    get:
+      tags: [Core]
+      summary: Get university
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: University details
+        '404':
+          description: Not found
+    put:
+      tags: [Core]
+      summary: Update university
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UniversityInput'
+      responses:
+        '200':
+          description: University updated
+
+  /api/v1/campuses:
+    get:
+      tags: [Core]
+      summary: List campuses
+      parameters:
+        - name: university_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of campuses
+    post:
+      tags: [Core]
+      summary: Create campus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampusInput'
+      responses:
+        '201':
+          description: Campus created
+
+  /api/v1/campuses/{id}:
+    get:
+      tags: [Core]
+      summary: Get campus
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Campus details
+    put:
+      tags: [Core]
+      summary: Update campus
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampusInput'
+      responses:
+        '200':
+          description: Campus updated
+
+  /api/v1/departments:
+    get:
+      tags: [Core]
+      summary: List departments
+      parameters:
+        - name: campus_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of departments
+    post:
+      tags: [Core]
+      summary: Create department
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentInput'
+      responses:
+        '201':
+          description: Department created
+
+  /api/v1/departments/{id}:
+    get:
+      tags: [Core]
+      summary: Get department
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Department details
+    put:
+      tags: [Core]
+      summary: Update department
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepartmentInput'
+      responses:
+        '200':
+          description: Department updated
+
+  /api/v1/rooms:
+    get:
+      tags: [Core]
+      summary: List rooms
+      parameters:
+        - name: campus_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of rooms
+    post:
+      tags: [Core]
+      summary: Create room
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoomInput'
+      responses:
+        '201':
+          description: Room created
+
+  # ─── STUDENT ─────────────────────────────────────────────────────────────────
+  /api/v1/students:
+    get:
+      tags: [Student]
+      summary: List students
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated list of students
+
+  /api/v1/students/enroll:
+    post:
+      tags: [Student]
+      summary: Enroll a new student
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollRequest'
+      responses:
+        '201':
+          description: Student enrolled
+
+  /api/v1/students/me:
+    get:
+      tags: [Student]
+      summary: Get current student profile
+      responses:
+        '200':
+          description: Student profile
+
+  /api/v1/students/me/dashboard:
+    get:
+      tags: [Student]
+      summary: Get student dashboard
+      responses:
+        '200':
+          description: Dashboard data
+
+  /api/v1/students/{id}:
+    get:
+      tags: [Student]
+      summary: Get student by ID
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Student details
+        '404':
+          description: Not found
+
+  /api/v1/students/{id}/guardians:
+    get:
+      tags: [Student]
+      summary: List student guardians
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: List of guardians
+    post:
+      tags: [Student]
+      summary: Add guardian
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuardianInput'
+      responses:
+        '201':
+          description: Guardian added
+
+  /api/v1/students/{id}/grievances:
+    get:
+      tags: [Student]
+      summary: List student grievances
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: List of grievances
+    post:
+      tags: [Student]
+      summary: File a grievance
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrievanceInput'
+      responses:
+        '201':
+          description: Grievance filed
+
+  # ─── ADMISSIONS ──────────────────────────────────────────────────────────────
+  /api/v1/admissions/cycles/open:
+    get:
+      tags: [Admissions]
+      summary: List open admission cycles
+      security: []
+      responses:
+        '200':
+          description: List of open cycles
+
+  /api/v1/admissions/cycles:
+    get:
+      tags: [Admissions]
+      summary: List admission cycles
+      responses:
+        '200':
+          description: List of cycles
+    post:
+      tags: [Admissions]
+      summary: Create admission cycle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdmissionCycleInput'
+      responses:
+        '201':
+          description: Cycle created
+
+  /api/v1/admissions/cycles/{id}:
+    get:
+      tags: [Admissions]
+      summary: Get admission cycle
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Cycle details
+    put:
+      tags: [Admissions]
+      summary: Update admission cycle
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdmissionCycleInput'
+      responses:
+        '200':
+          description: Cycle updated
+
+  /api/v1/admissions/cycles/{id}/close:
+    post:
+      tags: [Admissions]
+      summary: Close admission cycle
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Cycle closed
+
+  /api/v1/admissions/cycles/{id}/stats:
+    get:
+      tags: [Admissions]
+      summary: Get cycle statistics
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Cycle stats
+
+  /api/v1/admissions/applicants:
+    get:
+      tags: [Admissions]
+      summary: List applicants
+      parameters:
+        - name: cycle_id
+          in: query
+          schema:
+            type: integer
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Paginated list of applicants
+    post:
+      tags: [Admissions]
+      summary: Submit application
+      description: Creates an applicant and emits `admission.application_submitted` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicantInput'
+      responses:
+        '201':
+          description: Application submitted
+
+  /api/v1/admissions/applicants/{id}:
+    get:
+      tags: [Admissions]
+      summary: Get applicant
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Applicant details
+    put:
+      tags: [Admissions]
+      summary: Update applicant
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicantInput'
+      responses:
+        '200':
+          description: Applicant updated
+
+  /api/v1/admissions/applicants/{id}/status:
+    put:
+      tags: [Admissions]
+      summary: Update application status
+      description: |
+        When status is set to APPROVED, emits `admission.application_approved`
+        event which triggers automatic student creation in the Student module.
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status_id]
+              properties:
+                status_id:
+                  type: integer
+      responses:
+        '200':
+          description: Status updated
+
+  /api/v1/admissions/applicants/{id}/status-history:
+    get:
+      tags: [Admissions]
+      summary: Get applicant status history
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Status history
+
+  /api/v1/admissions/applicants/{id}/documents:
+    get:
+      tags: [Admissions]
+      summary: List applicant documents
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: List of documents
+    post:
+      tags: [Admissions]
+      summary: Upload document
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentInput'
+      responses:
+        '201':
+          description: Document uploaded
+
+  /api/v1/admissions/documents/{id}/verify:
+    post:
+      tags: [Admissions]
+      summary: Verify document
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Document verified
+
+  /api/v1/admissions/seat-allocations:
+    post:
+      tags: [Admissions]
+      summary: Allocate seat
+      description: Emits `admission.seat_allocated` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SeatAllocationInput'
+      responses:
+        '201':
+          description: Seat allocated
+
+  /api/v1/admissions/applicants/{id}/seat-allocation:
+    get:
+      tags: [Admissions]
+      summary: Get applicant seat allocation
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Seat allocation details
+
+  /api/v1/admissions/cycles/{id}/seat-allocations:
+    get:
+      tags: [Admissions]
+      summary: List seat allocations for cycle
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: List of seat allocations
+
+  /api/v1/admissions/waitlist:
+    post:
+      tags: [Admissions]
+      summary: Add applicant to waitlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WaitlistInput'
+      responses:
+        '201':
+          description: Added to waitlist
+
+  /api/v1/admissions/cycles/{id}/waitlist:
+    get:
+      tags: [Admissions]
+      summary: Get cycle waitlist
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Waitlist
+
+  /api/v1/admissions/applicants/{id}/convert-to-student:
+    post:
+      tags: [Admissions]
+      summary: Convert applicant to student
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [student_id]
+              properties:
+                student_id:
+                  type: integer
+      responses:
+        '200':
+          description: Applicant converted
+
+  # ─── ACADEMIC ───────────────────────────────────────────────────────────────
+  /api/v1/academic/terms:
+    get:
+      tags: [Academic]
+      summary: List academic terms
+      responses:
+        '200':
+          description: List of terms
+    post:
+      tags: [Academic]
+      summary: Create academic term
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcademicTermInput'
+      responses:
+        '201':
+          description: Term created
+
+  /api/v1/academic/terms/current:
+    get:
+      tags: [Academic]
+      summary: Get current academic term
+      responses:
+        '200':
+          description: Current term
+
+  /api/v1/academic/terms/{id}:
+    get:
+      tags: [Academic]
+      summary: Get academic term
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Term details
+    put:
+      tags: [Academic]
+      summary: Update academic term
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcademicTermInput'
+      responses:
+        '200':
+          description: Term updated
+
+  /api/v1/academic/terms/{id}/set-current:
+    post:
+      tags: [Academic]
+      summary: Set term as current
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Term set as current
+
+  /api/v1/academic/programs:
+    get:
+      tags: [Academic]
+      summary: List programs
+      responses:
+        '200':
+          description: List of programs
+    post:
+      tags: [Academic]
+      summary: Create program
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramInput'
+      responses:
+        '201':
+          description: Program created
+
+  /api/v1/academic/programs/{id}:
+    get:
+      tags: [Academic]
+      summary: Get program
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Program details
+    put:
+      tags: [Academic]
+      summary: Update program
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramInput'
+      responses:
+        '200':
+          description: Program updated
+
+  /api/v1/academic/programs/{id}/curriculum:
+    get:
+      tags: [Academic]
+      summary: Get program curriculum
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Curriculum details
+
+  /api/v1/academic/programs/{id}/subjects:
+    post:
+      tags: [Academic]
+      summary: Add subject to program
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProgramSubjectInput'
+      responses:
+        '201':
+          description: Subject added
+
+  /api/v1/academic/programs/{id}/subjects/{subject_id}:
+    delete:
+      tags: [Academic]
+      summary: Remove subject from program
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: subject_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Subject removed
+
+  /api/v1/academic/subjects:
+    get:
+      tags: [Academic]
+      summary: List subjects
+      responses:
+        '200':
+          description: List of subjects
+    post:
+      tags: [Academic]
+      summary: Create subject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubjectInput'
+      responses:
+        '201':
+          description: Subject created
+
+  /api/v1/academic/subjects/{id}:
+    get:
+      tags: [Academic]
+      summary: Get subject
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Subject details
+    put:
+      tags: [Academic]
+      summary: Update subject
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubjectInput'
+      responses:
+        '200':
+          description: Subject updated
+
+  /api/v1/academic/batches:
+    get:
+      tags: [Academic]
+      summary: List batches
+      responses:
+        '200':
+          description: List of batches
+    post:
+      tags: [Academic]
+      summary: Create batch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchInput'
+      responses:
+        '201':
+          description: Batch created
+
+  /api/v1/academic/batches/{id}/sections:
+    get:
+      tags: [Academic]
+      summary: List sections in batch
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: List of sections
+    post:
+      tags: [Academic]
+      summary: Create section
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SectionInput'
+      responses:
+        '201':
+          description: Section created
+
+  /api/v1/academic/offerings:
+    get:
+      tags: [Academic]
+      summary: List course offerings
+      responses:
+        '200':
+          description: List of offerings
+    post:
+      tags: [Academic]
+      summary: Create course offering
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourseOfferingInput'
+      responses:
+        '201':
+          description: Offering created
+
+  /api/v1/academic/offerings/{id}:
+    get:
+      tags: [Academic]
+      summary: Get course offering
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Offering details
+    put:
+      tags: [Academic]
+      summary: Update course offering
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourseOfferingInput'
+      responses:
+        '200':
+          description: Offering updated
+
+  /api/v1/academic/offerings/{id}/timetable:
+    get:
+      tags: [Academic]
+      summary: Get offering timetable
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Timetable entries
+    post:
+      tags: [Academic]
+      summary: Create timetable entry
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TimetableInput'
+      responses:
+        '201':
+          description: Timetable entry created
+
+  /api/v1/academic/term-registrations:
+    get:
+      tags: [Academic]
+      summary: List term registrations
+      parameters:
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+        - name: term_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of registrations
+    post:
+      tags: [Academic]
+      summary: Register student for term
+      description: |
+        Emits `academic.term_registered` event which triggers
+        automatic invoice generation in the Finance module.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TermRegistrationInput'
+      responses:
+        '201':
+          description: Registration successful
+
+  /api/v1/academic/course-registrations:
+    post:
+      tags: [Academic]
+      summary: Register student for course
+      description: Emits `academic.course_registered` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CourseRegistrationInput'
+      responses:
+        '201':
+          description: Course registered
+
+  /api/v1/academic/course-registrations/{id}/drop:
+    post:
+      tags: [Academic]
+      summary: Drop course
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Course dropped
+
+  /api/v1/academic/students/{student_id}/courses:
+    get:
+      tags: [Academic]
+      summary: Get student courses
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of courses
+
+  /api/v1/academic/students/{student_id}/timetable:
+    get:
+      tags: [Academic]
+      summary: Get student timetable
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Timetable
+
+  /api/v1/academic/students/me/timetable:
+    get:
+      tags: [Academic]
+      summary: Get my timetable
+      responses:
+        '200':
+          description: My timetable
+
+  /api/v1/academic/students/me/courses:
+    get:
+      tags: [Academic]
+      summary: Get my courses
+      responses:
+        '200':
+          description: My courses
+
+  /api/v1/academic/students/me/attendance:
+    get:
+      tags: [Academic]
+      summary: Get my attendance
+      responses:
+        '200':
+          description: My attendance
+
+  /api/v1/academic/attendance:
+    post:
+      tags: [Academic]
+      summary: Mark attendance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceInput'
+      responses:
+        '201':
+          description: Attendance marked
+
+  /api/v1/academic/students/{student_id}/attendance:
+    get:
+      tags: [Academic]
+      summary: Get student attendance
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Attendance records
+
+  /api/v1/academic/students/{student_id}/attendance/summary:
+    get:
+      tags: [Academic]
+      summary: Get attendance summary
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Attendance summary
+
+  /api/v1/academic/calendar:
+    get:
+      tags: [Academic]
+      summary: List academic calendar events
+      responses:
+        '200':
+          description: Calendar events
+    post:
+      tags: [Academic]
+      summary: Create calendar event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarEventInput'
+      responses:
+        '201':
+          description: Event created
+
+  # ─── FINANCE ────────────────────────────────────────────────────────────────
+  /api/v1/finance/summary:
+    get:
+      tags: [Finance]
+      summary: Get finance summary
+      responses:
+        '200':
+          description: Finance summary
+
+  /api/v1/finance/fee-heads:
+    get:
+      tags: [Finance]
+      summary: List fee heads
+      responses:
+        '200':
+          description: List of fee heads
+    post:
+      tags: [Finance]
+      summary: Create fee head
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeeHeadInput'
+      responses:
+        '201':
+          description: Fee head created
+
+  /api/v1/finance/fee-heads/{id}:
+    put:
+      tags: [Finance]
+      summary: Update fee head
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeeHeadInput'
+      responses:
+        '200':
+          description: Fee head updated
+
+  /api/v1/finance/fee-structures:
+    get:
+      tags: [Finance]
+      summary: List fee structures
+      responses:
+        '200':
+          description: List of fee structures
+    post:
+      tags: [Finance]
+      summary: Create fee structure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeeStructureInput'
+      responses:
+        '201':
+          description: Fee structure created
+
+  /api/v1/finance/fee-structures/{id}:
+    put:
+      tags: [Finance]
+      summary: Update fee structure
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeeStructureInput'
+      responses:
+        '200':
+          description: Fee structure updated
+
+  /api/v1/finance/invoices:
+    get:
+      tags: [Finance]
+      summary: List all invoices
+      responses:
+        '200':
+          description: List of invoices
+
+  /api/v1/finance/invoices/me:
+    get:
+      tags: [Finance]
+      summary: List my invoices
+      responses:
+        '200':
+          description: My invoices
+
+  /api/v1/finance/invoices/generate:
+    post:
+      tags: [Finance]
+      summary: Generate invoice manually
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [student_id, term_id, program_id]
+              properties:
+                student_id:
+                  type: integer
+                term_id:
+                  type: integer
+                program_id:
+                  type: integer
+      responses:
+        '201':
+          description: Invoice generated
+
+  /api/v1/finance/invoices/{id}:
+    get:
+      tags: [Finance]
+      summary: Get invoice
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Invoice details
+
+  /api/v1/finance/invoices/student/{student_id}:
+    get:
+      tags: [Finance]
+      summary: List student invoices
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Student invoices
+
+  /api/v1/finance/payments:
+    get:
+      tags: [Finance]
+      summary: List payments
+      responses:
+        '200':
+          description: List of payments
+    post:
+      tags: [Finance]
+      summary: Process payment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentInput'
+      responses:
+        '201':
+          description: Payment processed
+
+  /api/v1/finance/payments/{id}:
+    get:
+      tags: [Finance]
+      summary: Get payment
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Payment details
+
+  /api/v1/finance/scholarships:
+    get:
+      tags: [Finance]
+      summary: List scholarships
+      responses:
+        '200':
+          description: List of scholarships
+    post:
+      tags: [Finance]
+      summary: Create scholarship
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScholarshipInput'
+      responses:
+        '201':
+          description: Scholarship created
+
+  /api/v1/finance/scholarships/{id}:
+    put:
+      tags: [Finance]
+      summary: Update scholarship
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScholarshipInput'
+      responses:
+        '200':
+          description: Scholarship updated
+
+  /api/v1/finance/scholarships/assign:
+    post:
+      tags: [Finance]
+      summary: Assign scholarship to student
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StudentScholarshipInput'
+      responses:
+        '201':
+          description: Scholarship assigned
+
+  /api/v1/finance/scholarships/student/{student_id}:
+    get:
+      tags: [Finance]
+      summary: List student scholarships
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Student scholarships
+
+  /api/v1/finance/discounts/student/{student_id}:
+    get:
+      tags: [Finance]
+      summary: List student discounts
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Student discounts
+
+  /api/v1/finance/discounts:
+    post:
+      tags: [Finance]
+      summary: Apply discount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscountInput'
+      responses:
+        '201':
+          description: Discount applied
+
+  /api/v1/finance/installments/student/{student_id}:
+    get:
+      tags: [Finance]
+      summary: List student installments
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Student installments
+
+  /api/v1/finance/installments:
+    post:
+      tags: [Finance]
+      summary: Create installment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstallmentInput'
+      responses:
+        '201':
+          description: Installment created
+
+  /api/v1/finance/refunds:
+    get:
+      tags: [Finance]
+      summary: List refunds
+      responses:
+        '200':
+          description: List of refunds
+    post:
+      tags: [Finance]
+      summary: Request refund
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundInput'
+      responses:
+        '201':
+          description: Refund requested
+
+  /api/v1/finance/refunds/{id}/approve:
+    post:
+      tags: [Finance]
+      summary: Approve refund
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Refund approved
+
+  # ─── HR ──────────────────────────────────────────────────────────────────────
+  /api/v1/hr/stats:
+    get:
+      tags: [HR]
+      summary: Get HR statistics
+      responses:
+        '200':
+          description: HR stats
+
+  /api/v1/hr/designations:
+    get:
+      tags: [HR]
+      summary: List designations
+      responses:
+        '200':
+          description: List of designations
+    post:
+      tags: [HR]
+      summary: Create designation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DesignationInput'
+      responses:
+        '201':
+          description: Designation created
+
+  /api/v1/hr/employment-types:
+    get:
+      tags: [HR]
+      summary: List employment types
+      responses:
+        '200':
+          description: List of employment types
+
+  /api/v1/hr/leave-types:
+    get:
+      tags: [HR]
+      summary: List leave types
+      responses:
+        '200':
+          description: List of leave types
+    post:
+      tags: [HR]
+      summary: Create leave type
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveTypeInput'
+      responses:
+        '201':
+          description: Leave type created
+
+  /api/v1/hr/salary-components:
+    get:
+      tags: [HR]
+      summary: List salary components
+      responses:
+        '200':
+          description: List of salary components
+    post:
+      tags: [HR]
+      summary: Create salary component
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalaryComponentInput'
+      responses:
+        '201':
+          description: Salary component created
+
+  /api/v1/hr/employees:
+    get:
+      tags: [HR]
+      summary: List employees
+      responses:
+        '200':
+          description: List of employees
+    post:
+      tags: [HR]
+      summary: Create employee
+      description: Emits `hr.employee_onboarded` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmployeeInput'
+      responses:
+        '201':
+          description: Employee created
+
+  /api/v1/hr/employees/me:
+    get:
+      tags: [HR]
+      summary: Get my employee profile
+      responses:
+        '200':
+          description: My profile
+
+  /api/v1/hr/employees/{id}:
+    get:
+      tags: [HR]
+      summary: Get employee
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Employee details
+    put:
+      tags: [HR]
+      summary: Update employee
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmployeeInput'
+      responses:
+        '200':
+          description: Employee updated
+
+  /api/v1/hr/employees/{id}/deactivate:
+    post:
+      tags: [HR]
+      summary: Deactivate employee
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Employee deactivated
+
+  /api/v1/hr/employees/{id}/transfer:
+    post:
+      tags: [HR]
+      summary: Transfer employee department
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [department_id]
+              properties:
+                department_id:
+                  type: integer
+      responses:
+        '200':
+          description: Employee transferred
+
+  /api/v1/hr/employees/{id}/dept-history:
+    get:
+      tags: [HR]
+      summary: Get department transfer history
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Transfer history
+
+  /api/v1/hr/faculty:
+    get:
+      tags: [HR]
+      summary: List faculty
+      responses:
+        '200':
+          description: List of faculty
+
+  /api/v1/hr/employees/{id}/faculty-profile:
+    get:
+      tags: [HR]
+      summary: Get faculty profile
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Faculty profile
+    put:
+      tags: [HR]
+      summary: Upsert faculty profile
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FacultyProfileInput'
+      responses:
+        '200':
+          description: Faculty profile updated
+
+  /api/v1/hr/employees/{id}/staff-profile:
+    get:
+      tags: [HR]
+      summary: Get staff profile
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Staff profile
+    put:
+      tags: [HR]
+      summary: Upsert staff profile
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaffProfileInput'
+      responses:
+        '200':
+          description: Staff profile updated
+
+  /api/v1/hr/employees/{id}/salary:
+    get:
+      tags: [HR]
+      summary: Get current salary
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Salary details
+    post:
+      tags: [HR]
+      summary: Assign salary
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalaryInput'
+      responses:
+        '201':
+          description: Salary assigned
+
+  /api/v1/hr/payroll/run:
+    post:
+      tags: [HR]
+      summary: Run payroll
+      description: Emits `hr.payroll_processed` event which triggers finance voucher creation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employee_id, month]
+              properties:
+                employee_id:
+                  type: integer
+                month:
+                  type: string
+                  example: "2026-05"
+      responses:
+        '201':
+          description: Payroll processed
+
+  /api/v1/hr/payroll:
+    get:
+      tags: [HR]
+      summary: List payroll runs
+      responses:
+        '200':
+          description: List of payroll runs
+
+  /api/v1/hr/employees/{id}/payslips:
+    get:
+      tags: [HR]
+      summary: Get employee payslips
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: List of payslips
+
+  /api/v1/hr/employees/{id}/leave-balances:
+    get:
+      tags: [HR]
+      summary: Get leave balances
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Leave balances
+
+  /api/v1/hr/leave-requests:
+    get:
+      tags: [HR]
+      summary: List leave requests
+      responses:
+        '200':
+          description: List of leave requests
+    post:
+      tags: [HR]
+      summary: Request leave
+      description: Emits `hr.leave_requested` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaveRequestInput'
+      responses:
+        '201':
+          description: Leave requested
+
+  /api/v1/hr/leave-requests/{id}/approve:
+    post:
+      tags: [HR]
+      summary: Approve leave request
+      description: Emits `hr.leave_approved` event
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Leave approved
+
+  /api/v1/hr/leave-requests/{id}/reject:
+    post:
+      tags: [HR]
+      summary: Reject leave request
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Leave rejected
+
+  /api/v1/hr/attendance:
+    post:
+      tags: [HR]
+      summary: Mark HR attendance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HRAttendanceInput'
+      responses:
+        '201':
+          description: Attendance marked
+
+  /api/v1/hr/employees/{id}/attendance:
+    get:
+      tags: [HR]
+      summary: Get employee attendance
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Attendance records
+
+  /api/v1/hr/jobs:
+    get:
+      tags: [HR]
+      summary: List job postings
+      responses:
+        '200':
+          description: List of jobs
+    post:
+      tags: [HR]
+      summary: Post a job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobInput'
+      responses:
+        '201':
+          description: Job posted
+
+  /api/v1/hr/jobs/{id}:
+    get:
+      tags: [HR]
+      summary: Get job posting
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Job details
+
+  /api/v1/hr/jobs/{id}/applications:
+    get:
+      tags: [HR]
+      summary: List job applications
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: List of applications
+    post:
+      tags: [HR]
+      summary: Apply for job
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobApplicationInput'
+      responses:
+        '201':
+          description: Application submitted
+
+  /api/v1/hr/job-applications/{id}/status:
+    put:
+      tags: [HR]
+      summary: Update job application status
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status_id]
+              properties:
+                status_id:
+                  type: integer
+      responses:
+        '200':
+          description: Status updated
+
+  # ─── EXAM ───────────────────────────────────────────────────────────────────
+  /api/v1/exam/components:
+    get:
+      tags: [Exam]
+      summary: List exam components
+      responses:
+        '200':
+          description: List of components
+    post:
+      tags: [Exam]
+      summary: Create exam component
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExamComponentInput'
+      responses:
+        '201':
+          description: Component created
+
+  /api/v1/exam/components/{id}:
+    put:
+      tags: [Exam]
+      summary: Update exam component
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExamComponentInput'
+      responses:
+        '200':
+          description: Component updated
+
+  /api/v1/exam/schedules:
+    get:
+      tags: [Exam]
+      summary: List exam schedules
+      responses:
+        '200':
+          description: List of schedules
+    post:
+      tags: [Exam]
+      summary: Create exam schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExamScheduleInput'
+      responses:
+        '201':
+          description: Schedule created
+
+  /api/v1/exam/schedules/{id}:
+    get:
+      tags: [Exam]
+      summary: Get exam schedule
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Schedule details
+    put:
+      tags: [Exam]
+      summary: Update exam schedule
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExamScheduleInput'
+      responses:
+        '200':
+          description: Schedule updated
+
+  /api/v1/exam/results:
+    post:
+      tags: [Exam]
+      summary: Enter result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResultInput'
+      responses:
+        '201':
+          description: Result entered
+
+  /api/v1/exam/results/bulk:
+    post:
+      tags: [Exam]
+      summary: Bulk enter results
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ResultInput'
+      responses:
+        '201':
+          description: Results entered
+
+  /api/v1/exam/results/{id}:
+    put:
+      tags: [Exam]
+      summary: Update result
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResultInput'
+      responses:
+        '200':
+          description: Result updated
+
+  /api/v1/exam/results/{id}/component-marks:
+    get:
+      tags: [Exam]
+      summary: Get component marks
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Component marks
+    post:
+      tags: [Exam]
+      summary: Enter component marks
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComponentMarksInput'
+      responses:
+        '201':
+          description: Component marks entered
+
+  /api/v1/exam/results/publish:
+    post:
+      tags: [Exam]
+      summary: Publish results
+      description: Emits `exam.result_published` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [term_id]
+              properties:
+                term_id:
+                  type: integer
+      responses:
+        '200':
+          description: Results published
+
+  /api/v1/exam/students/{student_id}/results:
+    get:
+      tags: [Exam]
+      summary: Get student results
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Student results
+
+  /api/v1/exam/students/{student_id}/transcript:
+    get:
+      tags: [Exam]
+      summary: Get student transcript
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Transcript
+
+  /api/v1/exam/students/{student_id}/sgpa:
+    get:
+      tags: [Exam]
+      summary: Get student SGPA
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: SGPA
+
+  /api/v1/exam/students/{student_id}/cgpa:
+    get:
+      tags: [Exam]
+      summary: Get student CGPA
+      parameters:
+        - name: student_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: CGPA
+
+  /api/v1/exam/students/me/results:
+    get:
+      tags: [Exam]
+      summary: Get my results
+      responses:
+        '200':
+          description: My results
+
+  /api/v1/exam/students/me/transcript:
+    get:
+      tags: [Exam]
+      summary: Get my transcript
+      responses:
+        '200':
+          description: My transcript
+
+  /api/v1/exam/students/me/cgpa:
+    get:
+      tags: [Exam]
+      summary: Get my CGPA
+      responses:
+        '200':
+          description: My CGPA
+
+  /api/v1/exam/revaluations:
+    get:
+      tags: [Exam]
+      summary: List revaluation requests
+      responses:
+        '200':
+          description: List of revaluations
+    post:
+      tags: [Exam]
+      summary: Request revaluation
+      description: Emits `exam.reevaluation_requested` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevaluationInput'
+      responses:
+        '201':
+          description: Revaluation requested
+
+  /api/v1/exam/revaluations/{id}/process:
+    post:
+      tags: [Exam]
+      summary: Process revaluation
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviewed_marks, grade]
+              properties:
+                reviewed_marks:
+                  type: number
+                grade:
+                  type: string
+                remarks:
+                  type: string
+      responses:
+        '200':
+          description: Revaluation processed
+
+  /api/v1/exam/supplementary:
+    get:
+      tags: [Exam]
+      summary: List supplementary exams
+      responses:
+        '200':
+          description: List of supplementary exams
+    post:
+      tags: [Exam]
+      summary: Create supplementary exam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplementaryInput'
+      responses:
+        '201':
+          description: Supplementary exam created
+
+  # ─── LIBRARY ─────────────────────────────────────────────────────────────────
+  /api/v1/library/stats:
+    get:
+      tags: [Library]
+      summary: Get library statistics
+      responses:
+        '200':
+          description: Library stats
+
+  /api/v1/library/authors:
+    get:
+      tags: [Library]
+      summary: List authors
+      responses:
+        '200':
+          description: List of authors
+    post:
+      tags: [Library]
+      summary: Create author
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorInput'
+      responses:
+        '201':
+          description: Author created
+
+  /api/v1/library/authors/{id}:
+    get:
+      tags: [Library]
+      summary: Get author
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Author details
+    put:
+      tags: [Library]
+      summary: Update author
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorInput'
+      responses:
+        '200':
+          description: Author updated
+
+  /api/v1/library/books:
+    get:
+      tags: [Library]
+      summary: List books
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+          description: Search by title or ISBN
+      responses:
+        '200':
+          description: List of books
+    post:
+      tags: [Library]
+      summary: Create book
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookInput'
+      responses:
+        '201':
+          description: Book created
+
+  /api/v1/library/books/{id}:
+    get:
+      tags: [Library]
+      summary: Get book
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Book details
+    put:
+      tags: [Library]
+      summary: Update book
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookInput'
+      responses:
+        '200':
+          description: Book updated
+
+  /api/v1/library/books/{id}/authors:
+    get:
+      tags: [Library]
+      summary: Get book authors
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Book authors
+    post:
+      tags: [Library]
+      summary: Add author to book
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [author_id]
+              properties:
+                author_id:
+                  type: integer
+      responses:
+        '201':
+          description: Author added
+
+  /api/v1/library/books/{id}/authors/{author_id}:
+    delete:
+      tags: [Library]
+      summary: Remove author from book
+      parameters:
+        - $ref: '#/components/parameters/ID'
+        - name: author_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Author removed
+
+  /api/v1/library/book-copies:
+    get:
+      tags: [Library]
+      summary: List book copies
+      parameters:
+        - name: book_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of book copies
+    post:
+      tags: [Library]
+      summary: Create book copy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookCopyInput'
+      responses:
+        '201':
+          description: Book copy created
+
+  /api/v1/library/digital-resources:
+    get:
+      tags: [Library]
+      summary: List digital resources
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of digital resources
+    post:
+      tags: [Library]
+      summary: Create digital resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DigitalResourceInput'
+      responses:
+        '201':
+          description: Digital resource created
+
+  /api/v1/library/circulations/issue:
+    post:
+      tags: [Library]
+      summary: Issue book
+      description: Emits `library.book_issued` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [book_copy_id, student_id]
+              properties:
+                book_copy_id:
+                  type: integer
+                student_id:
+                  type: integer
+      responses:
+        '201':
+          description: Book issued
+
+  /api/v1/library/circulations/{id}/return:
+    post:
+      tags: [Library]
+      summary: Return book
+      description: |
+        Calculates fine if overdue. Emits `library.book_returned` event.
+        If overdue, also emits `library.book_overdue` which triggers
+        Finance module to create a fine invoice.
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Book returned
+
+  /api/v1/library/circulations/active:
+    get:
+      tags: [Library]
+      summary: List active circulations
+      parameters:
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Active circulations
+
+  /api/v1/library/circulations/mark-overdue:
+    post:
+      tags: [Library]
+      summary: Mark overdue books
+      description: Scans all overdue books and emits `library.book_overdue` events
+      responses:
+        '200':
+          description: Overdue check completed
+
+  /api/v1/library/reservations:
+    get:
+      tags: [Library]
+      summary: List reservations
+      parameters:
+        - name: book_id
+          in: query
+          schema:
+            type: integer
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of reservations
+    post:
+      tags: [Library]
+      summary: Create reservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationInput'
+      responses:
+        '201':
+          description: Reservation created
+
+  /api/v1/library/fines:
+    get:
+      tags: [Library]
+      summary: List fines
+      parameters:
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of fines
+
+  /api/v1/library/fines/{id}/pay:
+    post:
+      tags: [Library]
+      summary: Pay fine
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Fine paid
+
+  /api/v1/library/purchase-requests:
+    get:
+      tags: [Library]
+      summary: List purchase requests
+      responses:
+        '200':
+          description: List of purchase requests
+    post:
+      tags: [Library]
+      summary: Create purchase request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseRequestInput'
+      responses:
+        '201':
+          description: Purchase request created
+
+  /api/v1/library/purchase-requests/{id}/approve:
+    post:
+      tags: [Library]
+      summary: Approve purchase request
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Purchase request approved
+
+  # ─── HOSTEL ─────────────────────────────────────────────────────────────────
+  /api/v1/hostel/stats:
+    get:
+      tags: [Hostel]
+      summary: Get hostel statistics
+      responses:
+        '200':
+          description: Hostel stats
+
+  /api/v1/hostel/hostels:
+    get:
+      tags: [Hostel]
+      summary: List hostels
+      parameters:
+        - name: campus_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of hostels
+    post:
+      tags: [Hostel]
+      summary: Create hostel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostelInput'
+      responses:
+        '201':
+          description: Hostel created
+
+  /api/v1/hostel/hostels/{id}:
+    get:
+      tags: [Hostel]
+      summary: Get hostel
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Hostel details
+    put:
+      tags: [Hostel]
+      summary: Update hostel
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostelInput'
+      responses:
+        '200':
+          description: Hostel updated
+
+  /api/v1/hostel/rooms:
+    get:
+      tags: [Hostel]
+      summary: List rooms
+      parameters:
+        - name: hostel_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of rooms
+    post:
+      tags: [Hostel]
+      summary: Create room
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostelRoomInput'
+      responses:
+        '201':
+          description: Room created
+
+  /api/v1/hostel/rooms/{id}:
+    get:
+      tags: [Hostel]
+      summary: Get room
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Room details
+    put:
+      tags: [Hostel]
+      summary: Update room
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostelRoomInput'
+      responses:
+        '200':
+          description: Room updated
+
+  /api/v1/hostel/beds:
+    get:
+      tags: [Hostel]
+      summary: List beds
+      parameters:
+        - name: room_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of beds
+    post:
+      tags: [Hostel]
+      summary: Create bed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostelBedInput'
+      responses:
+        '201':
+          description: Bed created
+
+  /api/v1/hostel/allocations:
+    get:
+      tags: [Hostel]
+      summary: List allocations
+      parameters:
+        - name: hostel_id
+          in: query
+          schema:
+            type: integer
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of allocations
+
+  /api/v1/hostel/allocations/allocate:
+    post:
+      tags: [Hostel]
+      summary: Allocate room
+      description: Emits `hostel.allocated` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [student_id, room_id]
+              properties:
+                student_id:
+                  type: integer
+                room_id:
+                  type: integer
+                bed_id:
+                  type: integer
+      responses:
+        '201':
+          description: Room allocated
+
+  /api/v1/hostel/allocations/{id}/deallocate:
+    post:
+      tags: [Hostel]
+      summary: Deallocate room
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Room deallocated
+
+  /api/v1/hostel/mess-bills:
+    get:
+      tags: [Hostel]
+      summary: List mess bills
+      parameters:
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of mess bills
+    post:
+      tags: [Hostel]
+      summary: Create mess bill
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessBillInput'
+      responses:
+        '201':
+          description: Mess bill created
+
+  /api/v1/hostel/mess-bills/{id}/pay:
+    post:
+      tags: [Hostel]
+      summary: Pay mess bill
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Mess bill paid
+
+  /api/v1/hostel/maintenance-requests:
+    get:
+      tags: [Hostel]
+      summary: List maintenance requests
+      parameters:
+        - name: room_id
+          in: query
+          schema:
+            type: integer
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of maintenance requests
+    post:
+      tags: [Hostel]
+      summary: Create maintenance request
+      description: Emits `hostel.maintenance_requested` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaintenanceRequestInput'
+      responses:
+        '201':
+          description: Maintenance request created
+
+  /api/v1/hostel/maintenance-requests/{id}/resolve:
+    post:
+      tags: [Hostel]
+      summary: Resolve maintenance request
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Maintenance request resolved
+
+  /api/v1/hostel/visitor-logs:
+    get:
+      tags: [Hostel]
+      summary: List visitor logs
+      parameters:
+        - name: hostel_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of visitor logs
+    post:
+      tags: [Hostel]
+      summary: Create visitor log
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VisitorLogInput'
+      responses:
+        '201':
+          description: Visitor log created
+
+  /api/v1/hostel/visitor-logs/{id}/exit:
+    post:
+      tags: [Hostel]
+      summary: Record visitor exit
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Exit recorded
+
+  # ─── TRANSPORT ──────────────────────────────────────────────────────────────
+  /api/v1/transport/stats:
+    get:
+      tags: [Transport]
+      summary: Get transport statistics
+      responses:
+        '200':
+          description: Transport stats
+
+  /api/v1/transport/buses:
+    get:
+      tags: [Transport]
+      summary: List buses
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: List of buses
+    post:
+      tags: [Transport]
+      summary: Create bus
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BusInput'
+      responses:
+        '201':
+          description: Bus created
+
+  /api/v1/transport/buses/{id}:
+    get:
+      tags: [Transport]
+      summary: Get bus
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Bus details
+    put:
+      tags: [Transport]
+      summary: Update bus
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BusInput'
+      responses:
+        '200':
+          description: Bus updated
+
+  /api/v1/transport/routes:
+    get:
+      tags: [Transport]
+      summary: List routes
+      parameters:
+        - name: active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: List of routes
+    post:
+      tags: [Transport]
+      summary: Create route
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteInput'
+      responses:
+        '201':
+          description: Route created
+
+  /api/v1/transport/routes/{id}:
+    get:
+      tags: [Transport]
+      summary: Get route
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Route details
+    put:
+      tags: [Transport]
+      summary: Update route
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteInput'
+      responses:
+        '200':
+          description: Route updated
+
+  /api/v1/transport/stops:
+    get:
+      tags: [Transport]
+      summary: List stops
+      parameters:
+        - name: route_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of stops
+    post:
+      tags: [Transport]
+      summary: Create stop
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopInput'
+      responses:
+        '201':
+          description: Stop created
+
+  /api/v1/transport/stops/{id}:
+    put:
+      tags: [Transport]
+      summary: Update stop
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StopInput'
+      responses:
+        '200':
+          description: Stop updated
+
+  /api/v1/transport/bus-assignments:
+    get:
+      tags: [Transport]
+      summary: List bus assignments
+      parameters:
+        - name: bus_id
+          in: query
+          schema:
+            type: integer
+        - name: route_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of bus assignments
+    post:
+      tags: [Transport]
+      summary: Assign bus to route
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BusAssignmentInput'
+      responses:
+        '201':
+          description: Bus assigned
+
+  /api/v1/transport/bus-assignments/{id}/end:
+    post:
+      tags: [Transport]
+      summary: End bus assignment
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Assignment ended
+
+  /api/v1/transport/passes:
+    get:
+      tags: [Transport]
+      summary: List student passes
+      parameters:
+        - name: student_id
+          in: query
+          schema:
+            type: integer
+        - name: route_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of passes
+
+  /api/v1/transport/passes/issue:
+    post:
+      tags: [Transport]
+      summary: Issue student pass
+      description: Emits `transport.pass_issued` event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StudentPassInput'
+      responses:
+        '201':
+          description: Pass issued
+
+  /api/v1/transport/passes/{id}/renew:
+    post:
+      tags: [Transport]
+      summary: Renew student pass
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [valid_to, fee_paid]
+              properties:
+                valid_to:
+                  type: string
+                  format: date
+                  example: "2028-05-31"
+                fee_paid:
+                  type: number
+      responses:
+        '200':
+          description: Pass renewed
+
+  /api/v1/transport/maintenance:
+    get:
+      tags: [Transport]
+      summary: List vehicle maintenance records
+      parameters:
+        - name: bus_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: List of maintenance records
+    post:
+      tags: [Transport]
+      summary: Create vehicle maintenance record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VehicleMaintenanceInput'
+      responses:
+        '201':
+          description: Maintenance record created
+
+# ─── COMPONENTS ───────────────────────────────────────────────────────────────
+components:
+  parameters:
+    ID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  schemas:
+    UniversityInput:
+      type: object
+      required: [name, short_name]
+      properties:
+        name:
+          type: string
+        short_name:
+          type: string
+        established_year:
+          type: integer
+        address:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postal_code:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        website:
+          type: string
+        is_active:
+          type: boolean
+          default: true
+
+    CampusInput:
+      type: object
+      required: [university_id, name, code]
+      properties:
+        university_id:
+          type: integer
+        name:
+          type: string
+        code:
+          type: string
+        address:
+          type: string
+        city:
+          type: string
+        state:
+          type: string
+        postal_code:
+          type: string
+        phone:
+          type: string
+        is_main_campus:
+          type: boolean
+        is_active:
+          type: boolean
+          default: true
+
+    DepartmentInput:
+      type: object
+      required: [name, code]
+      properties:
+        campus_id:
+          type: integer
+        name:
+          type: string
+        code:
+          type: string
+        parent_department_id:
+          type: integer
+        established_year:
+          type: integer
+        hod_employee_id:
+          type: integer
+        description:
+          type: string
+        is_active:
+          type: boolean
+          default: true
+
+    RoomInput:
+      type: object
+      required: [campus_id, room_number, room_type, capacity]
+      properties:
+        campus_id:
+          type: integer
+        room_number:
+          type: string
+        room_type:
+          type: string
+        capacity:
+          type: integer
+        building:
+          type: string
+        floor:
+          type: integer
+        is_active:
+          type: boolean
+          default: true
+
+    EnrollRequest:
+      type: object
+      required: [user_id, program_id, first_name, last_name, date_of_birth, email, phone, admission_year]
+      properties:
+        user_id:
+          type: integer
+        program_id:
+          type: integer
+        first_name:
+          type: string
+        last_name:
+          type: string
+        date_of_birth:
+          type: string
+          format: date
+        email:
+          type: string
+        phone:
+          type: string
+        gender_id:
+          type: integer
+        category_id:
+          type: integer
+        admission_year:
+          type: integer
+        admission_quota:
+          type: string
+
+    GuardianInput:
+      type: object
+      required: [name, relation, phone]
+      properties:
+        name:
+          type: string
+        relation:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        occupation:
+          type: string
+        is_primary:
+          type: boolean
+
+    GrievanceInput:
+      type: object
+      required: [category, description]
+      properties:
+        category:
+          type: string
+        description:
+          type: string
+
+    AdmissionCycleInput:
+      type: object
+      required: [name, academic_year]
+      properties:
+        name:
+          type: string
+        academic_year:
+          type: string
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        status_id:
+          type: integer
+
+    ApplicantInput:
+      type: object
+      required: [cycle_id, program_id, first_name, last_name, email, phone]
+      properties:
+        cycle_id:
+          type: integer
+        program_id:
+          type: integer
+        first_name:
+          type: string
+        last_name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        date_of_birth:
+          type: string
+          format: date-time
+        gender_id:
+          type: integer
+        category_id:
+          type: integer
+        address:
+          type: string
+        previous_qualification:
+          type: string
+        previous_percentage:
+          type: number
+
+    DocumentInput:
+      type: object
+      required: [document_type, file_path]
+      properties:
+        document_type:
+          type: string
+        file_path:
+          type: string
+
+    SeatAllocationInput:
+      type: object
+      required: [applicant_id, program_id, batch_id]
+      properties:
+        applicant_id:
+          type: integer
+        program_id:
+          type: integer
+        batch_id:
+          type: integer
+        seat_type:
+          type: string
+
+    WaitlistInput:
+      type: object
+      required: [applicant_id, program_id]
+      properties:
+        applicant_id:
+          type: integer
+        program_id:
+          type: integer
+        position:
+          type: integer
+
+    AcademicTermInput:
+      type: object
+      required: [name, academic_year]
+      properties:
+        name:
+          type: string
+        term_number:
+          type: integer
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        academic_year:
+          type: string
+        is_current:
+          type: boolean
+
+    ProgramInput:
+      type: object
+      required: [name, code]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        department_id:
+          type: integer
+        duration_years:
+          type: integer
+        total_semesters:
+          type: integer
+        degree_level:
+          type: string
+        is_active:
+          type: boolean
+
+    ProgramSubjectInput:
+      type: object
+      required: [subject_id, semester_number]
+      properties:
+        subject_id:
+          type: integer
+        semester_number:
+          type: integer
+        is_elective:
+          type: boolean
+
+    SubjectInput:
+      type: object
+      required: [name, code, credits]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        credits:
+          type: integer
+        lecture_hours:
+          type: integer
+        lab_hours:
+          type: integer
+        type:
+          type: string
+
+    BatchInput:
+      type: object
+      required: [program_id, batch_year, name]
+      properties:
+        program_id:
+          type: integer
+        batch_year:
+          type: integer
+        name:
+          type: string
+        current_semester:
+          type: integer
+
+    SectionInput:
+      type: object
+      required: [name, capacity]
+      properties:
+        name:
+          type: string
+        capacity:
+          type: integer
+
+    CourseOfferingInput:
+      type: object
+      required: [subject_id, term_id]
+      properties:
+        subject_id:
+          type: integer
+        term_id:
+          type: integer
+        employee_id:
+          type: integer
+        section_id:
+          type: integer
+        max_enrollment:
+          type: integer
+
+    TimetableInput:
+      type: object
+      required: [day_of_week, start_time, end_time]
+      properties:
+        day_of_week:
+          type: string
+        start_time:
+          type: string
+        end_time:
+          type: string
+        room_id:
+          type: integer
+
+    TermRegistrationInput:
+      type: object
+      required: [student_id, academic_term_id, batch_id]
+      properties:
+        student_id:
+          type: integer
+        academic_term_id:
+          type: integer
+        batch_id:
+          type: integer
+
+    CourseRegistrationInput:
+      type: object
+      required: [student_id, offering_id]
+      properties:
+        student_id:
+          type: integer
+        offering_id:
+          type: integer
+
+    AttendanceInput:
+      type: object
+      required: [session_id, student_id]
+      properties:
+        session_id:
+          type: integer
+        student_id:
+          type: integer
+        status_id:
+          type: integer
+
+    CalendarEventInput:
+      type: object
+      required: [title, event_type, start_date, end_date]
+      properties:
+        title:
+          type: string
+        event_type:
+          type: string
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+
+    FeeHeadInput:
+      type: object
+      required: [name, code]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        description:
+          type: string
+        is_mandatory:
+          type: boolean
+
+    FeeStructureInput:
+      type: object
+      required: [program_id, semester_number, fee_head_id, amount, academic_year]
+      properties:
+        program_id:
+          type: integer
+        semester_number:
+          type: integer
+        fee_head_id:
+          type: integer
+        amount:
+          type: number
+        academic_year:
+          type: string
+        is_active:
+          type: boolean
+
+    PaymentInput:
+      type: object
+      required: [invoice_id, student_id, amount, transaction_id]
+      properties:
+        invoice_id:
+          type: integer
+        student_id:
+          type: integer
+        amount:
+          type: number
+        transaction_id:
+          type: string
+        payment_mode_id:
+          type: integer
+
+    ScholarshipInput:
+      type: object
+      required: [name, amount]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        eligibility_criteria:
+          type: object
+        amount:
+          type: number
+        renewable:
+          type: boolean
+
+    StudentScholarshipInput:
+      type: object
+      required: [student_id, scholarship_id, academic_year, amount_awarded]
+      properties:
+        student_id:
+          type: integer
+        scholarship_id:
+          type: integer
+        academic_year:
+          type: string
+        amount_awarded:
+          type: number
+
+    DiscountInput:
+      type: object
+      required: [student_id, fee_head_id, academic_year, amount, reason]
+      properties:
+        student_id:
+          type: integer
+        fee_head_id:
+          type: integer
+        academic_year:
+          type: string
+        amount:
+          type: number
+        reason:
+          type: string
+
+    InstallmentInput:
+      type: object
+      required: [student_id, academic_term_id, due_date, amount]
+      properties:
+        student_id:
+          type: integer
+        academic_term_id:
+          type: integer
+        due_date:
+          type: string
+          format: date-time
+        amount:
+          type: number
+
+    RefundInput:
+      type: object
+      required: [payment_id, student_id, amount, reason]
+      properties:
+        payment_id:
+          type: integer
+        student_id:
+          type: integer
+        amount:
+          type: number
+        reason:
+          type: string
+
+    DesignationInput:
+      type: object
+      required: [code, name]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        is_active:
+          type: boolean
+
+    LeaveTypeInput:
+      type: object
+      required: [code, name, max_days]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        max_days:
+          type: number
+        paid:
+          type: boolean
+        is_active:
+          type: boolean
+
+    SalaryComponentInput:
+      type: object
+      required: [code, name, type]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        is_active:
+          type: boolean
+
+    EmployeeInput:
+      type: object
+      required: [user_id, employee_code, first_name, last_name, joining_date]
+      properties:
+        user_id:
+          type: integer
+        employee_code:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        gender_id:
+          type: integer
+        date_of_birth:
+          type: string
+          format: date-time
+        phone:
+          type: string
+        address:
+          type: string
+        joining_date:
+          type: string
+          format: date-time
+        employment_type_id:
+          type: integer
+        department_id:
+          type: integer
+        designation_id:
+          type: integer
+        is_active:
+          type: boolean
+
+    FacultyProfileInput:
+      type: object
+      properties:
+        specialization:
+          type: string
+        qualification:
+          type: string
+        research_area:
+          type: string
+        office_hours:
+          type: string
+        max_load_credits:
+          type: integer
+
+    StaffProfileInput:
+      type: object
+      properties:
+        job_title:
+          type: string
+        supervisor_id:
+          type: integer
+        work_location:
+          type: string
+
+    SalaryInput:
+      type: object
+      required: [effective_from, base_pay, net_salary]
+      properties:
+        effective_from:
+          type: string
+          format: date-time
+        effective_to:
+          type: string
+          format: date-time
+        base_pay:
+          type: number
+        net_salary:
+          type: number
+        is_active:
+          type: boolean
+
+    LeaveRequestInput:
+      type: object
+      required: [employee_id, leave_type_id, start_date, end_date, reason]
+      properties:
+        employee_id:
+          type: integer
+        leave_type_id:
+          type: integer
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        reason:
+          type: string
+
+    HRAttendanceInput:
+      type: object
+      required: [employee_id, attendance_date]
+      properties:
+        employee_id:
+          type: integer
+        attendance_date:
+          type: string
+          format: date-time
+        check_in:
+          type: string
+          format: date-time
+        check_out:
+          type: string
+          format: date-time
+        status_id:
+          type: integer
+
+    JobInput:
+      type: object
+      required: [title, vacancies]
+      properties:
+        title:
+          type: string
+        department_id:
+          type: integer
+        employment_type_id:
+          type: integer
+        vacancies:
+          type: integer
+        posted_date:
+          type: string
+          format: date-time
+        closing_date:
+          type: string
+          format: date-time
+        description:
+          type: string
+
+    JobApplicationInput:
+      type: object
+      required: [applicant_name, email, phone]
+      properties:
+        applicant_name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        resume_path:
+          type: string
+
+    ExamComponentInput:
+      type: object
+      required: [name, max_marks, weightage_percentage]
+      properties:
+        name:
+          type: string
+        max_marks:
+          type: number
+        weightage_percentage:
+          type: number
+
+    ExamScheduleInput:
+      type: object
+      required: [term_id, subject_id, exam_type, start_date, end_date]
+      properties:
+        term_id:
+          type: integer
+        subject_id:
+          type: integer
+        exam_type:
+          type: string
+        start_date:
+          type: string
+          format: date-time
+        end_date:
+          type: string
+          format: date-time
+        room_id:
+          type: integer
+
+    ResultInput:
+      type: object
+      required: [student_id, subject_id, marks_obtained, total_marks]
+      properties:
+        student_id:
+          type: integer
+        subject_id:
+          type: integer
+        schedule_id:
+          type: integer
+        marks_obtained:
+          type: number
+        total_marks:
+          type: number
+        grade:
+          type: string
+        grade_point:
+          type: number
+
+    ComponentMarksInput:
+      type: object
+      required: [component_id, marks_obtained]
+      properties:
+        component_id:
+          type: integer
+        marks_obtained:
+          type: number
+        max_marks:
+          type: number
+
+    RevaluationInput:
+      type: object
+      required: [result_id, student_id, reason]
+      properties:
+        result_id:
+          type: integer
+        student_id:
+          type: integer
+        reason:
+          type: string
+
+    SupplementaryInput:
+      type: object
+      required: [term_id, subject_id, exam_date]
+      properties:
+        term_id:
+          type: integer
+        subject_id:
+          type: integer
+        exam_date:
+          type: string
+          format: date-time
+
+    AuthorInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        biography:
+          type: string
+
+    BookInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        isbn:
+          type: string
+        publisher:
+          type: string
+        publication_year:
+          type: integer
+        edition:
+          type: string
+        total_copies:
+          type: integer
+        available_copies:
+          type: integer
+        location:
+          type: string
+
+    BookCopyInput:
+      type: object
+      required: [book_id]
+      properties:
+        book_id:
+          type: integer
+        barcode:
+          type: string
+        copy_number:
+          type: integer
+        condition:
+          type: string
+        shelf_location:
+          type: string
+
+    DigitalResourceInput:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        resource_type:
+          type: string
+        url:
+          type: string
+        access_link:
+          type: string
+        publisher:
+          type: string
+        license_valid_until:
+          type: string
+          format: date-time
+
+    ReservationInput:
+      type: object
+      required: [book_id, student_id]
+      properties:
+        book_id:
+          type: integer
+        student_id:
+          type: integer
+
+    PurchaseRequestInput:
+      type: object
+      required: [requested_by, title]
+      properties:
+        requested_by:
+          type: integer
+        title:
+          type: string
+        author:
+          type: string
+        isbn:
+          type: string
+        reason:
+          type: string
+
+    HostelInput:
+      type: object
+      required: [name, code]
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        campus_id:
+          type: integer
+        gender_id:
+          type: integer
+        total_rooms:
+          type: integer
+        warden_id:
+          type: integer
+        contact_number:
+          type: string
+        address:
+          type: string
+        is_active:
+          type: boolean
+
+    HostelRoomInput:
+      type: object
+      required: [hostel_id, room_number, capacity]
+      properties:
+        hostel_id:
+          type: integer
+        room_number:
+          type: string
+        room_type:
+          type: string
+        capacity:
+          type: integer
+        monthly_rent:
+          type: number
+
+    HostelBedInput:
+      type: object
+      required: [room_id, bed_number]
+      properties:
+        room_id:
+          type: integer
+        bed_number:
+          type: string
+
+    MessBillInput:
+      type: object
+      required: [student_id, amount]
+      properties:
+        student_id:
+          type: integer
+        month:
+          type: string
+          format: date-time
+        amount:
+          type: number
+
+    MaintenanceRequestInput:
+      type: object
+      required: [student_id, room_id, description]
+      properties:
+        student_id:
+          type: integer
+        room_id:
+          type: integer
+        category:
+          type: string
+        description:
+          type: string
+
+    VisitorLogInput:
+      type: object
+      required: [hostel_id, visitor_name]
+      properties:
+        hostel_id:
+          type: integer
+        visitor_name:
+          type: string
+        student_id:
+          type: integer
+        purpose:
+          type: string
+        id_proof:
+          type: string
+
+    BusInput:
+      type: object
+      required: [bus_number, registration_no, capacity]
+      properties:
+        bus_number:
+          type: string
+        registration_no:
+          type: string
+        capacity:
+          type: integer
+        driver_employee_id:
+          type: integer
+        is_active:
+          type: boolean
+
+    RouteInput:
+      type: object
+      required: [route_name]
+      properties:
+        route_name:
+          type: string
+        description:
+          type: string
+        distance_km:
+          type: number
+        estimated_time:
+          type: string
+        is_active:
+          type: boolean
+
+    StopInput:
+      type: object
+      required: [route_id, stop_name, stop_order]
+      properties:
+        route_id:
+          type: integer
+        stop_name:
+          type: string
+        stop_order:
+          type: integer
+        latitude:
+          type: number
+        longitude:
+          type: number
+        arrival_time:
+          type: string
+        departure_time:
+          type: string
+
+    BusAssignmentInput:
+      type: object
+      required: [bus_id, route_id]
+      properties:
+        bus_id:
+          type: integer
+        route_id:
+          type: integer
+
+    StudentPassInput:
+      type: object
+      required: [student_id, route_id, pickup_stop_id, drop_stop_id, valid_from, valid_to]
+      properties:
+        student_id:
+          type: integer
+        route_id:
+          type: integer
+        pickup_stop_id:
+          type: integer
+        drop_stop_id:
+          type: integer
+        valid_from:
+          type: string
+          format: date-time
+        valid_to:
+          type: string
+          format: date-time
+        fee_paid:
+          type: number
+
+    VehicleMaintenanceInput:
+      type: object
+      required: [bus_id]
+      properties:
+        bus_id:
+          type: integer
+        description:
+          type: string
+        cost:
+          type: number
+        next_due_date:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
