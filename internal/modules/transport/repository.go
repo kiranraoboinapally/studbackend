@@ -85,7 +85,9 @@ func (r *Repository) GetBusAssignment(id uint) (*domain.BusAssignment, error) {
 	var ba domain.BusAssignment
 	return &ba, r.db.First(&ba, id).Error
 }
-
+func (r *Repository) UpdateBusAssignment(ba *domain.BusAssignment) error {
+	return r.db.Save(ba).Error
+}
 // Student Passes
 func (r *Repository) ListStudentPasses(studentID, routeID uint) ([]domain.StudentPass, error) {
 	var list []domain.StudentPass
