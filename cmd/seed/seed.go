@@ -955,7 +955,7 @@ func initDB() {
 	port := getEnv("DB_PORT", "5432")
 	user := getEnv("DB_USER", "postgres")
 	password := getEnv("DB_PASSWORD", "root")
-	dbname := getEnv("DB_NAME", "university_erp_prod10")
+	dbname := getEnv("DB_NAME", "university_erp_prod11")
 
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable TimeZone=UTC",
 		host, port, user, password, dbname)

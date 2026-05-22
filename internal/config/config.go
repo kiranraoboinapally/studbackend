@@ -44,7 +44,7 @@ func Load() *Config {
 		DBPort:     env("DB_PORT", "5432"),
 		DBUser:     env("DB_USER", "postgres"),
 		DBPassword: env("DB_PASSWORD", "root"),
-		DBName:     env("DB_NAME", "university_erp_prod10"),
+		DBName:     env("DB_NAME", "university_erp_prod11"),
 
 		JWTSecret: env("JWT_SECRET", "mySecretKeyAs123#"),
 
