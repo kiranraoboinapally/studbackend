@@ -31,6 +31,7 @@ import (
 	"university-erp-backend/internal/platform/middleware"
 	"university-erp-backend/internal/platform/outbox"
 	"university-erp-backend/internal/platform/swagger"
+	wsplatform "university-erp-backend/internal/platform/websocket"
 )
 
 func main() {
@@ -95,8 +96,44 @@ func main() {
 	hostelHandler := hostelmod.NewHandler(hostelService)
 	transportHandler := transportmod.NewHandler(transportService)
 
+	// ─── Setup WebSocket Hub ────────────────────────────────────────────────────
+	wsHub := wsplatform.NewHub()
+	go wsHub.Run()
+	wsHandler := wsplatform.NewHandler(wsHub, jwtMgr)
+
+	eventsToSubscribe := []string{
+		eventbus.EventUserRegistered,
+		eventbus.EventUserLoggedIn,
+		eventbus.EventStudentEnrolled,
+		eventbus.EventApplicationSubmitted,
+		eventbus.EventApplicationApproved,
+		eventbus.EventSeatAllocated,
+		eventbus.EventInvoiceGenerated,
+		eventbus.EventPaymentCompleted,
+		eventbus.EventPaymentFailed,
+		eventbus.EventRefundProcessed,
+		eventbus.EventResultPublished,
+		eventbus.EventHostelAllocated,
+		eventbus.EventMaintenanceRequested,
+		eventbus.EventNotificationCreated,
+	}
+
+	for _, evtType := range eventsToSubscribe {
+		wsHubForClosure := wsHub
+		bus.Subscribe(evtType, func(ctx context.Context, ev eventbus.Event) error {
+			frontendType := ev.Type
+			if ev.Type == eventbus.EventPaymentCompleted {
+				frontendType = "finance.payment_received"
+			}
+			wsHubForClosure.Broadcast(frontendType, ev.Payload)
+			return nil
+		})
+	}
+
 	// ─── Setup Router ───────────────────────────────────────────────────────────
 	r := mux.NewRouter()
+
+	r.Handle("/ws", wsHandler)
 
 	// Global middleware
 	r.Use(middleware.RequestLogger)

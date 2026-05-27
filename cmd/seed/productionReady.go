@@ -2052,6 +2052,7 @@ func seedUserData() {
 		{RoleName: "student", Description: "Student access"},
 		{RoleName: "staff", Description: "Operational staff"},
 		{RoleName: "auditor", Description: "Audit logs view"},
+		{RoleName: "counsellor", Description: "For Admissions Enquiry accepting"},
 	}
 	roleMap := make(map[string]uint)
 	for _, r := range roles {
