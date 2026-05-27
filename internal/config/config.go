@@ -50,7 +50,7 @@ func Load() *Config {
 
 		ServerPort: env("SERVER_PORT", "8080"),
 		AppEnv:     env("APP_ENV", "development"),
-		AppURL:     env("APP_URL", "http://localhost:3000"),
+		AppURL:     env("APP_URL", "http://192.168.1.14:3000"),
 
 		SMTPHost: env("SMTP_HOST", "smtp.gmail.com"),
 		SMTPPort: env("SMTP_PORT", "587"),
