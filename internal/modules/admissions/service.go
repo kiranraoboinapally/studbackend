@@ -149,6 +149,31 @@ func (s *Service) SubmitEnquiry(ctx context.Context, e *domain.Enquiry) (*domain
 func generateOTP() string {
         return fmt.Sprintf("%06d", 100000+rand.Intn(900000))
 }
+
+func (s *Service) ResendOTP(ctx context.Context, id uint) (*domain.Enquiry, error) {
+        e, err := s.repo.GetEnquiryByID(id)
+        if err != nil {
+                return nil, apperrors.NotFound("enquiry not found")
+        }
+        if e.OTPVerified {
+                return nil, apperrors.BadRequest("OTP already verified")
+        }
+        // Generate new OTP
+        otp := generateOTP()
+        e.OTPToken = otp
+        now := time.Now()
+        e.OTPSentAt = &now
+        expiresAt := now.Add(15 * time.Minute)
+        e.OTPExpiresAt = &expiresAt
+        e.Status = "pending"
+        if err := s.repo.UpdateEnquiry(e); err != nil {
+                log.Println("UPDATE ENQUIRY FAILED:", err)
+                return nil, err
+        }
+        log.Printf("OTP RESENT for mobile %s: %s", e.MobileNumber, otp)
+        return e, nil
+}
+
 func (s *Service) GetEnquiryByID(ctx context.Context, id uint) (*domain.Enquiry, error) {
         e, err := s.repo.GetEnquiryByID(id)
         if err != nil {

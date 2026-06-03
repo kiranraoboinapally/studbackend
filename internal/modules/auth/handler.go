@@ -24,6 +24,8 @@ func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 	// Public routes
 	r.HandleFunc("/api/v1/auth/login", h.Login).Methods("POST", "OPTIONS")
 	r.HandleFunc("/api/v1/auth/register", h.Register).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/v1/auth/verify-otp", h.VerifyOTP).Methods("POST", "OPTIONS")
+	r.HandleFunc("/api/v1/auth/resend-otp", h.ResendOTP).Methods("POST", "OPTIONS")
 
 	// Protected routes
 	protected := r.PathPrefix("/api/v1/auth").Subrouter()
@@ -69,4 +71,52 @@ func (h *Handler) Profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MobileNumber string `json:"mobile_number"`
+		OTP          string `json:"otp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, err)
+		return
+	}
+
+	resp, err := h.service.VerifyOTP(r.Context(), req.MobileNumber, req.OTP)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"data":    resp,
+	})
+}
+
+func (h *Handler) ResendOTP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MobileNumber string `json:"mobile_number"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, err)
+		return
+	}
+
+	resp, err := h.service.ResendOTP(r.Context(), req.MobileNumber)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"otp":     resp.OTP,
+		"data":    resp,
+	})
 }

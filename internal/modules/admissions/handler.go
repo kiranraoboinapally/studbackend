@@ -20,9 +20,15 @@ func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 	// Public - open cycles visible without auth
 	r.HandleFunc("/api/v1/admissions/cycles/open", h.OpenCycles).Methods("GET")
-	
+
 	// Public - enquiry submission without auth
 	r.HandleFunc("/api/v1/admissions/enquiry", h.SubmitEnquiry).Methods("POST")
+
+	// Public - OTP verification without auth
+	r.HandleFunc("/api/v1/admissions/enquiries/{id:[0-9]+}/verify-otp", h.VerifyOTP).Methods("POST")
+
+	// Public - Resend OTP without auth
+	r.HandleFunc("/api/v1/admissions/enquiries/{id:[0-9]+}/resend-otp", h.ResendOTP).Methods("POST")
 
 	api := r.PathPrefix("/api/v1/admissions").Subrouter()
 	api.Use(authMW)
@@ -61,7 +67,6 @@ func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 	// Enquiries (protected)
 	api.HandleFunc("/enquiries", h.ListEnquiries).Methods("GET")
 	api.HandleFunc("/enquiries/{id:[0-9]+}", h.GetEnquiry).Methods("GET")
-	api.HandleFunc("/enquiries/{id:[0-9]+}/verify-otp", h.VerifyOTP).Methods("POST")
 }
 
 func (h *Handler) OpenCycles(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +299,9 @@ func (h *Handler) SubmitEnquiry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Include OTP in response for debugging (shows in network tab)
-	response.JSON(w, http.StatusCreated, map[string]interface{}{
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"otp":     result.OTPToken, // For debugging - remove in production
 		"data":    result,
@@ -340,4 +347,20 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, map[string]string{"message": "OTP verified successfully"})
+}
+
+func (h *Handler) ResendOTP(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	result, err := h.service.ResendOTP(r.Context(), uint(id))
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"otp":     result.OTPToken,
+		"data":    result,
+	})
 }

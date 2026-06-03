@@ -3,6 +3,8 @@ package authmod
 import (
 	"context"
 	"fmt"
+	"log"
+	"math/rand"
 	"time"
 
 	"university-erp-backend/internal/domain"
@@ -233,5 +235,38 @@ func (s *Service) GetProfile(ctx context.Context, userID uint) (*ProfileResponse
 		Email:    user.Email,
 		Roles:    roles,
 		IsActive: user.IsActive,
+	}, nil
+}
+
+// ─── OTP Verification ────────────────────────────────────────────────────────
+
+type OTPVerifyResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+type OTPResendResponse struct {
+	OTP  string `json:"otp"`
+	Data any    `json:"data"`
+}
+
+func (s *Service) VerifyOTP(ctx context.Context, mobileNumber, otp string) (*OTPVerifyResponse, error) {
+	// For now, this is a placeholder for auth OTP verification
+	// In a real implementation, you would verify the OTP against a stored value
+	return &OTPVerifyResponse{
+		Success: true,
+		Message: "OTP verified successfully",
+	}, nil
+}
+
+func (s *Service) ResendOTP(ctx context.Context, mobileNumber string) (*OTPResendResponse, error) {
+	// Generate OTP
+	otp := fmt.Sprintf("%06d", 100000+rand.Intn(900000))
+	log.Printf("OTP RESENT for mobile %s: %s", mobileNumber, otp)
+
+	// In a real implementation, you would store this OTP and send it via SMS
+	return &OTPResendResponse{
+		OTP:  otp,
+		Data: map[string]interface{}{"mobile_number": mobileNumber},
 	}, nil
 }
