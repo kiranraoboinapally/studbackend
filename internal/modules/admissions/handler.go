@@ -2,6 +2,7 @@ package admissionsmod
 
 import (
 	"encoding/json"
+	// "log"
 	"net/http"
 	"strconv"
 
@@ -19,6 +20,9 @@ func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 	// Public - open cycles visible without auth
 	r.HandleFunc("/api/v1/admissions/cycles/open", h.OpenCycles).Methods("GET")
+	
+	// Public - enquiry submission without auth
+	r.HandleFunc("/api/v1/admissions/enquiry", h.SubmitEnquiry).Methods("POST")
 
 	api := r.PathPrefix("/api/v1/admissions").Subrouter()
 	api.Use(authMW)
@@ -53,6 +57,11 @@ func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 
 	// Conversion
 	api.HandleFunc("/applicants/{id:[0-9]+}/convert-to-student", h.ConvertToStudent).Methods("POST")
+
+	// Enquiries (protected)
+	api.HandleFunc("/enquiries", h.ListEnquiries).Methods("GET")
+	api.HandleFunc("/enquiries/{id:[0-9]+}", h.GetEnquiry).Methods("GET")
+	api.HandleFunc("/enquiries/{id:[0-9]+}/verify-otp", h.VerifyOTP).Methods("POST")
 }
 
 func (h *Handler) OpenCycles(w http.ResponseWriter, r *http.Request) {
@@ -270,4 +279,65 @@ func (h *Handler) ConvertToStudent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.JSON(w, http.StatusOK, map[string]string{"message": "applicant converted to student"})
+}
+
+// Enquiry handlers
+func (h *Handler) SubmitEnquiry(w http.ResponseWriter, r *http.Request) {
+	var e domain.Enquiry
+	if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		response.Error(w, err)
+		return
+	}
+	result, err := h.service.SubmitEnquiry(r.Context(), &e)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	// Include OTP in response for debugging (shows in network tab)
+	response.JSON(w, http.StatusCreated, map[string]interface{}{
+		"success": true,
+		"otp":     result.OTPToken, // For debugging - remove in production
+		"data":    result,
+	})
+}
+func (h *Handler) ListEnquiries(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	data, total, err := h.service.ListEnquiries(r.Context(), page, pageSize)
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data":    data,
+		"total":   total,
+	})
+}
+func (h *Handler) GetEnquiry(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	data, err := h.service.GetEnquiryByID(r.Context(), uint(id))
+	if err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data":    data,
+	})
+}
+func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
+	var req struct {
+		OTP string `json:"otp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		response.Error(w, err)
+		return
+	}
+	if err := h.service.VerifyOTP(r.Context(), uint(id), req.OTP); err != nil {
+		response.Error(w, err)
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]string{"message": "OTP verified successfully"})
 }

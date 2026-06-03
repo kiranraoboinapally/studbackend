@@ -3,6 +3,8 @@ package admissionsmod
 import (
 	"context"
 	"fmt"
+	"log"
+	"math/rand"
 	"time"
 
 	"university-erp-backend/internal/domain"
@@ -46,12 +48,131 @@ func (s *Service) CreateCycle(ctx context.Context, c *domain.AdmissionCycle) err
 	return s.repo.CreateCycle(c)
 }
 func (s *Service) UpdateCycle(ctx context.Context, id uint, c *domain.AdmissionCycle) error {
-	existing, err := s.repo.GetCycle(id)
-	if err != nil {
-		return apperrors.NotFound("cycle not found")
-	}
-	c.ID = existing.ID
-	return s.repo.UpdateCycle(c)
+        existing, err := s.repo.GetCycle(id)
+        if err != nil {
+                return apperrors.NotFound("admission cycle not found")
+        }
+        c.ID = id
+        c.CreatedAt = existing.CreatedAt
+        return s.repo.UpdateCycle(c)
+}
+
+// Enquiries
+func (s *Service) SubmitEnquiry(ctx context.Context, e *domain.Enquiry) (*domain.Enquiry, error) {
+        // Copy Program to ProgramID if Program is set but ProgramID is not
+        if e.Program != nil && e.ProgramID == nil {
+                e.ProgramID = e.Program
+        }
+
+        // Check if enquiry already exists with same mobile or email
+        existing, _ := s.repo.GetEnquiryByMobile(e.MobileNumber)
+        if existing != nil {
+                // If OTP is not verified, allow updating the enquiry and resending OTP
+                if !existing.OTPVerified {
+                        // Update existing enquiry with new details
+                        existing.FullName = e.FullName
+                        existing.Country = e.Country
+                        existing.State = e.State
+                        existing.District = e.District
+                        existing.PreferredCampus = e.PreferredCampus
+                        existing.QualificationType = e.QualificationType
+                        if e.ProgramID != nil {
+                                existing.ProgramID = e.ProgramID
+                        }
+                        // Generate new OTP
+                        otp := generateOTP()
+                        existing.OTPToken = otp
+                        now := time.Now()
+                        existing.OTPSentAt = &now
+                        expiresAt := now.Add(15 * time.Minute)
+                        existing.OTPExpiresAt = &expiresAt
+                        existing.Status = "pending"
+                        if err := s.repo.UpdateEnquiry(existing); err != nil {
+                                log.Println("UPDATE ENQUIRY FAILED:", err)
+                                return nil, err
+                        }
+                        log.Printf("OTP RESENT for mobile %s: %s", existing.MobileNumber, otp)
+                        return existing, nil
+                }
+                return nil, apperrors.Conflict("enquiry with this mobile number already exists")
+        }
+        existing, _ = s.repo.GetEnquiryByEmail(e.EmailAddress)
+        if existing != nil {
+                // If OTP is not verified, allow updating the enquiry and resending OTP
+                if !existing.OTPVerified {
+                        // Update existing enquiry with new details
+                        existing.FullName = e.FullName
+                        existing.Country = e.Country
+                        existing.State = e.State
+                        existing.District = e.District
+                        existing.PreferredCampus = e.PreferredCampus
+                        existing.QualificationType = e.QualificationType
+                        if e.ProgramID != nil {
+                                existing.ProgramID = e.ProgramID
+                        }
+                        // Generate new OTP
+                        otp := generateOTP()
+                        existing.OTPToken = otp
+                        now := time.Now()
+                        existing.OTPSentAt = &now
+                        expiresAt := now.Add(15 * time.Minute)
+                        existing.OTPExpiresAt = &expiresAt
+                        existing.Status = "pending"
+                        if err := s.repo.UpdateEnquiry(existing); err != nil {
+                                log.Println("UPDATE ENQUIRY FAILED:", err)
+                                return nil, err
+                        }
+                        log.Printf("OTP RESENT for email %s: %s", existing.EmailAddress, otp)
+                        return existing, nil
+                }
+                return nil, apperrors.Conflict("enquiry with this email already exists")
+        }
+
+        // Generate OTP for new enquiry
+        otp := generateOTP()
+        e.OTPToken = otp
+        now := time.Now()
+        e.OTPSentAt = &now
+        expiresAt := now.Add(15 * time.Minute)
+        e.OTPExpiresAt = &expiresAt
+        e.Status = "pending"
+        e.OTPVerified = false
+
+        if err := s.repo.CreateEnquiry(e); err != nil {
+                log.Println("CREATE ENQUIRY FAILED:", err)
+                return nil, err
+        }
+        log.Printf("OTP GENERATED for mobile %s: %s", e.MobileNumber, otp)
+        return e, nil
+}
+
+func generateOTP() string {
+        return fmt.Sprintf("%06d", 100000+rand.Intn(900000))
+}
+func (s *Service) GetEnquiryByID(ctx context.Context, id uint) (*domain.Enquiry, error) {
+        e, err := s.repo.GetEnquiryByID(id)
+        if err != nil {
+                return nil, apperrors.NotFound("enquiry not found")
+        }
+        return e, nil
+}
+func (s *Service) VerifyOTP(ctx context.Context, id uint, otp string) error {
+        e, err := s.repo.GetEnquiryByID(id)
+        if err != nil {
+                return apperrors.NotFound("enquiry not found")
+        }
+        if e.OTPToken != otp {
+                return apperrors.BadRequest("invalid OTP")
+        }
+        if e.OTPExpiresAt != nil && time.Now().After(*e.OTPExpiresAt) {
+                return apperrors.BadRequest("OTP expired")
+        }
+        e.OTPVerified = true
+        e.Status = "verified"
+        return s.repo.UpdateEnquiry(e)
+}
+func (s *Service) ListEnquiries(ctx context.Context, page, pageSize int) ([]domain.Enquiry, int64, error) {
+        return s.repo.ListEnquiries(page, pageSize)
 }
 func (s *Service) CloseCycle(ctx context.Context, id uint) error {
 	existing, err := s.repo.GetCycle(id)

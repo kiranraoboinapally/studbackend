@@ -2,7 +2,7 @@ package admissionsmod
 
 import (
         "university-erp-backend/internal/domain"
-
+"errors"
         "gorm.io/gorm"
 )
 
@@ -47,6 +47,56 @@ func (r *Repository) ListApplicants(cycleID uint, page, pageSize int) ([]domain.
 func (r *Repository) GetApplicant(id uint) (*domain.Applicant, error) {
         var a domain.Applicant
         return &a, r.db.First(&a, id).Error
+}
+
+// Enquiries
+func (r *Repository) CreateEnquiry(e *domain.Enquiry) error {
+        return r.db.Create(e).Error
+}
+func (r *Repository) GetEnquiryByMobile(mobile string) (*domain.Enquiry, error) {
+    var e domain.Enquiry
+    err := r.db.Where("mobile_number = ?", mobile).First(&e).Error
+
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+        return nil, nil
+    }
+
+    if err != nil {
+        return nil, err
+    }
+
+    return &e, nil
+}
+func (r *Repository) GetEnquiryByEmail(email string) (*domain.Enquiry, error) {
+    var e domain.Enquiry
+
+    err := r.db.Where("email_address = ?", email).First(&e).Error
+
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+        return nil, nil
+    }
+
+    if err != nil {
+        return nil, err
+    }
+
+    return &e, nil
+}
+func (r *Repository) GetEnquiryByID(id uint) (*domain.Enquiry, error) {
+        var e domain.Enquiry
+        return &e, r.db.First(&e, id).Error
+}
+func (r *Repository) UpdateEnquiry(e *domain.Enquiry) error {
+        return r.db.Save(e).Error
+}
+func (r *Repository) ListEnquiries(page, pageSize int) ([]domain.Enquiry, int64, error) {
+        var list []domain.Enquiry
+        var total int64
+        r.db.Model(&domain.Enquiry{}).Count(&total)
+        if page < 1 { page = 1 }
+        if pageSize < 1 { pageSize = 20 }
+        offset := (page - 1) * pageSize
+        return list, total, r.db.Offset(offset).Limit(pageSize).Order("created_at DESC").Find(&list).Error
 }
 func (r *Repository) GetApplicantByNumber(appNum string) (*domain.Applicant, error) {
         var a domain.Applicant

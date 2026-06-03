@@ -22,6 +22,8 @@ func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 	pub.HandleFunc("/lookups/categories", h.Categories).Methods("GET")
 	pub.HandleFunc("/lookups/blood-groups", h.BloodGroups).Methods("GET")
 	pub.HandleFunc("/lookups/status-codes", h.StatusCodes).Methods("GET")
+	pub.HandleFunc("/universities", h.ListUniversities).Methods("GET")
+	pub.HandleFunc("/campuses", h.ListCampuses).Methods("GET")
 
 	// Protected core routes
 	api := r.PathPrefix("/api/v1").Subrouter()
@@ -34,7 +36,6 @@ func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 	api.HandleFunc("/universities/{id:[0-9]+}", h.UpdateUniversity).Methods("PUT")
 
 	// Campuses
-	api.HandleFunc("/campuses", h.ListCampuses).Methods("GET")
 	api.HandleFunc("/campuses", h.CreateCampus).Methods("POST")
 	api.HandleFunc("/campuses/{id:[0-9]+}", h.GetCampus).Methods("GET")
 	api.HandleFunc("/campuses/{id:[0-9]+}", h.UpdateCampus).Methods("PUT")

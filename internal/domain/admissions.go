@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"strconv"
+	"time"
+)
 
 // ─── Admissions ──────────────────────────────────────────────────────────────
 
@@ -101,3 +105,84 @@ type Waitlist struct {
 }
 
 func (Waitlist) TableName() string { return "admissions.waitlist" }
+
+type Enquiry struct {
+    ID               uint       `gorm:"primaryKey" json:"id"`
+    FullName         string     `gorm:"not null" json:"full_name"`
+    MobileNumber     string     `gorm:"unique;not null" json:"mobile_number"`
+    EmailAddress     string     `gorm:"unique;not null" json:"email_address"`
+    Country          string     `json:"country,omitempty"`
+    State            string     `json:"state,omitempty"`
+    District         string     `json:"district,omitempty"`
+    PreferredCampus  *int64     `json:"preferred_campus,omitempty"`
+    QualificationType string    `json:"qualification_type,omitempty"`
+    ProgramID        *int64     `json:"program_id,omitempty"`
+    Program          *int64     `gorm:"-" json:"program,omitempty"` // Alias for ProgramID to accept both field names, ignored by GORM
+    Status           string     `gorm:"default:pending" json:"status"`
+    OTPVerified      bool       `gorm:"default:false" json:"otp_verified"`
+    OTPToken         string     `json:"otp_token,omitempty"`
+    OTPSentAt        *time.Time `json:"otp_sent_at,omitempty"`
+    OTPExpiresAt     *time.Time `json:"otp_expires_at,omitempty"`
+    CreatedAt        time.Time  `json:"created_at"`
+    UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+func (Enquiry) TableName() string { return "admissions.enquiries" }
+
+// UnmarshalJSON handles both string and int64 values for numeric fields
+func (e *Enquiry) UnmarshalJSON(data []byte) error {
+	type Alias Enquiry
+	aux := &struct {
+		PreferredCampus interface{} `json:"preferred_campus,omitempty"`
+		Program         interface{} `json:"program,omitempty"`
+		ProgramID       interface{} `json:"program_id,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(e),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Handle PreferredCampus
+	if aux.PreferredCampus != nil {
+		switch v := aux.PreferredCampus.(type) {
+		case string:
+			if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+				e.PreferredCampus = &i
+			}
+		case float64:
+			i := int64(v)
+			e.PreferredCampus = &i
+		}
+	}
+
+	// Handle Program
+	if aux.Program != nil {
+		switch v := aux.Program.(type) {
+		case string:
+			if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+				e.Program = &i
+			}
+		case float64:
+			i := int64(v)
+			e.Program = &i
+		}
+	}
+
+	// Handle ProgramID
+	if aux.ProgramID != nil {
+		switch v := aux.ProgramID.(type) {
+		case string:
+			if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+				e.ProgramID = &i
+			}
+		case float64:
+			i := int64(v)
+			e.ProgramID = &i
+		}
+	}
+
+	return nil
+}

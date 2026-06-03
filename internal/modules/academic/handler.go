@@ -17,6 +17,10 @@ type Handler struct{ service *Service }
 func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 
 func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
+	// Public routes
+	pub := r.PathPrefix("/api/v1").Subrouter()
+	pub.HandleFunc("/academic/programs", h.ListPrograms).Methods("GET")
+	
 	api := r.PathPrefix("/api/v1").Subrouter()
 	api.Use(authMW)
 
@@ -29,7 +33,6 @@ func (h *Handler) RegisterRoutes(r *mux.Router, authMW mux.MiddlewareFunc) {
 	api.HandleFunc("/academic/terms/{id:[0-9]+}/set-current", h.SetCurrentTerm).Methods("POST")
 
 	// Programs
-	api.HandleFunc("/academic/programs", h.ListPrograms).Methods("GET")
 	api.HandleFunc("/academic/programs", h.CreateProgram).Methods("POST")
 	api.HandleFunc("/academic/programs/{id:[0-9]+}", h.GetProgram).Methods("GET")
 	api.HandleFunc("/academic/programs/{id:[0-9]+}", h.UpdateProgram).Methods("PUT")
