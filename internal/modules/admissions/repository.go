@@ -86,6 +86,18 @@ func (r *Repository) GetEnquiryByID(id uint) (*domain.Enquiry, error) {
         var e domain.Enquiry
         return &e, r.db.First(&e, id).Error
 }
+
+func (r *Repository) GetLatestUnverifiedEnquiry() (*domain.Enquiry, error) {
+        var e domain.Enquiry
+        err := r.db.Where("mobile_otp_verified = ? OR email_otp_verified = ?", false, false).Order("created_at DESC").First(&e).Error
+        if errors.Is(err, gorm.ErrRecordNotFound) {
+                return nil, nil
+        }
+        if err != nil {
+                return nil, err
+        }
+        return &e, nil
+}
 func (r *Repository) UpdateEnquiry(e *domain.Enquiry) error {
         return r.db.Save(e).Error
 }

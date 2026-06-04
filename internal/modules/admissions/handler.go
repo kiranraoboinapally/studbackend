@@ -298,13 +298,14 @@ func (h *Handler) SubmitEnquiry(w http.ResponseWriter, r *http.Request) {
 		response.Error(w, err)
 		return
 	}
-	// Include OTP in response for debugging (shows in network tab)
+	// Include both OTPs in response for debugging (shows in network tab)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"otp":     result.OTPToken, // For debugging - remove in production
-		"data":    result,
+		"mobile_otp": result.MobileOTPToken, // For debugging - remove in production
+		"email_otp":  result.EmailOTPToken,  // For debugging - remove in production
+		"data":       result,
 	})
 }
 func (h *Handler) ListEnquiries(w http.ResponseWriter, r *http.Request) {
@@ -336,13 +337,14 @@ func (h *Handler) GetEnquiry(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseUint(mux.Vars(r)["id"], 10, 64)
 	var req struct {
-		OTP string `json:"otp"`
+		OTP      string `json:"otp"`
+		OTPType  string `json:"otp_type"` // "mobile" or "email"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		response.Error(w, err)
 		return
 	}
-	if err := h.service.VerifyOTP(r.Context(), uint(id), req.OTP); err != nil {
+	if err := h.service.VerifyOTP(r.Context(), uint(id), req.OTP, req.OTPType); err != nil {
 		response.Error(w, err)
 		return
 	}
@@ -360,7 +362,8 @@ func (h *Handler) ResendOTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"otp":     result.OTPToken,
-		"data":    result,
+		"mobile_otp": result.MobileOTPToken,
+		"email_otp":  result.EmailOTPToken,
+		"data":       result,
 	})
 }

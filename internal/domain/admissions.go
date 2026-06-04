@@ -120,9 +120,20 @@ type Enquiry struct {
     Program          *int64     `gorm:"-" json:"program,omitempty"` // Alias for ProgramID to accept both field names, ignored by GORM
     Status           string     `gorm:"default:pending" json:"status"`
     OTPVerified      bool       `gorm:"default:false" json:"otp_verified"`
-    OTPToken         string     `json:"otp_token,omitempty"`
-    OTPSentAt        *time.Time `json:"otp_sent_at,omitempty"`
-    OTPExpiresAt     *time.Time `json:"otp_expires_at,omitempty"`
+    // Mobile OTP fields
+    MobileOTPToken   string     `json:"mobile_otp_token,omitempty"`
+    MobileOTPSentAt  *time.Time `json:"mobile_otp_sent_at,omitempty"`
+    MobileOTPExpiresAt *time.Time `json:"mobile_otp_expires_at,omitempty"`
+    MobileOTPVerified bool      `gorm:"default:false" json:"mobile_otp_verified"`
+    // Email OTP fields
+    EmailOTPToken    string     `json:"email_otp_token,omitempty"`
+    EmailOTPSentAt   *time.Time `json:"email_otp_sent_at,omitempty"`
+    EmailOTPExpiresAt *time.Time `json:"email_otp_expires_at,omitempty"`
+    EmailOTPVerified bool       `gorm:"default:false" json:"email_otp_verified"`
+    // Legacy OTP field (deprecated, kept for backward compatibility)
+    OTPToken         string     `gorm:"-" json:"otp_token,omitempty"` // Deprecated, use mobile_otp_token or email_otp_token
+    OTPSentAt        *time.Time `gorm:"-" json:"otp_sent_at,omitempty"` // Deprecated
+    OTPExpiresAt     *time.Time `gorm:"-" json:"otp_expires_at,omitempty"` // Deprecated
     CreatedAt        time.Time  `json:"created_at"`
     UpdatedAt        time.Time  `json:"updated_at"`
 }

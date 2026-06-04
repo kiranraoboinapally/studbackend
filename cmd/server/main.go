@@ -85,7 +85,7 @@ func main() {
 
 	// ─── Initialize Handlers ───────────────────────────────────────────────────
 	coreHandler := coremod.NewHandler(coreService)
-	authHandler := authmod.NewHandler(authService)
+	authHandler := authmod.NewHandler(authService, admissionsService)
 	studentHandler := studentmod.NewHandler(studentService)
 	admissionsHandler := admissionsmod.NewHandler(admissionsService)
 	academicHandler := academicmod.NewHandler(academicService)

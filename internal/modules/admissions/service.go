@@ -68,7 +68,7 @@ func (s *Service) SubmitEnquiry(ctx context.Context, e *domain.Enquiry) (*domain
         existing, _ := s.repo.GetEnquiryByMobile(e.MobileNumber)
         if existing != nil {
                 // If OTP is not verified, allow updating the enquiry and resending OTP
-                if !existing.OTPVerified {
+                if !existing.MobileOTPVerified || !existing.EmailOTPVerified {
                         // Update existing enquiry with new details
                         existing.FullName = e.FullName
                         existing.Country = e.Country
@@ -79,19 +79,33 @@ func (s *Service) SubmitEnquiry(ctx context.Context, e *domain.Enquiry) (*domain
                         if e.ProgramID != nil {
                                 existing.ProgramID = e.ProgramID
                         }
-                        // Generate new OTP
-                        otp := generateOTP()
-                        existing.OTPToken = otp
+                        // Generate separate OTPs for mobile and email
                         now := time.Now()
-                        existing.OTPSentAt = &now
                         expiresAt := now.Add(15 * time.Minute)
-                        existing.OTPExpiresAt = &expiresAt
+                        
+                        // Generate mobile OTP
+                        if !existing.MobileOTPVerified {
+                                mobileOTP := generateOTP()
+                                existing.MobileOTPToken = mobileOTP
+                                existing.MobileOTPSentAt = &now
+                                existing.MobileOTPExpiresAt = &expiresAt
+                                log.Printf("MOBILE OTP RESENT for %s: %s", existing.MobileNumber, mobileOTP)
+                        }
+                        
+                        // Generate email OTP
+                        if !existing.EmailOTPVerified {
+                                emailOTP := generateOTP()
+                                existing.EmailOTPToken = emailOTP
+                                existing.EmailOTPSentAt = &now
+                                existing.EmailOTPExpiresAt = &expiresAt
+                                log.Printf("EMAIL OTP RESENT for %s: %s", existing.EmailAddress, emailOTP)
+                        }
+                        
                         existing.Status = "pending"
                         if err := s.repo.UpdateEnquiry(existing); err != nil {
                                 log.Println("UPDATE ENQUIRY FAILED:", err)
                                 return nil, err
                         }
-                        log.Printf("OTP RESENT for mobile %s: %s", existing.MobileNumber, otp)
                         return existing, nil
                 }
                 return nil, apperrors.Conflict("enquiry with this mobile number already exists")
@@ -99,7 +113,7 @@ func (s *Service) SubmitEnquiry(ctx context.Context, e *domain.Enquiry) (*domain
         existing, _ = s.repo.GetEnquiryByEmail(e.EmailAddress)
         if existing != nil {
                 // If OTP is not verified, allow updating the enquiry and resending OTP
-                if !existing.OTPVerified {
+                if !existing.MobileOTPVerified || !existing.EmailOTPVerified {
                         // Update existing enquiry with new details
                         existing.FullName = e.FullName
                         existing.Country = e.Country
@@ -110,31 +124,58 @@ func (s *Service) SubmitEnquiry(ctx context.Context, e *domain.Enquiry) (*domain
                         if e.ProgramID != nil {
                                 existing.ProgramID = e.ProgramID
                         }
-                        // Generate new OTP
-                        otp := generateOTP()
-                        existing.OTPToken = otp
+                        // Generate separate OTPs for mobile and email
                         now := time.Now()
-                        existing.OTPSentAt = &now
                         expiresAt := now.Add(15 * time.Minute)
-                        existing.OTPExpiresAt = &expiresAt
+                        
+                        // Generate mobile OTP
+                        if !existing.MobileOTPVerified {
+                                mobileOTP := generateOTP()
+                                existing.MobileOTPToken = mobileOTP
+                                existing.MobileOTPSentAt = &now
+                                existing.MobileOTPExpiresAt = &expiresAt
+                                log.Printf("MOBILE OTP RESENT for %s: %s", existing.MobileNumber, mobileOTP)
+                        }
+                        
+                        // Generate email OTP
+                        if !existing.EmailOTPVerified {
+                                emailOTP := generateOTP()
+                                existing.EmailOTPToken = emailOTP
+                                existing.EmailOTPSentAt = &now
+                                existing.EmailOTPExpiresAt = &expiresAt
+                                log.Printf("EMAIL OTP RESENT for %s: %s", existing.EmailAddress, emailOTP)
+                        }
+                        
                         existing.Status = "pending"
                         if err := s.repo.UpdateEnquiry(existing); err != nil {
                                 log.Println("UPDATE ENQUIRY FAILED:", err)
                                 return nil, err
                         }
-                        log.Printf("OTP RESENT for email %s: %s", existing.EmailAddress, otp)
                         return existing, nil
                 }
                 return nil, apperrors.Conflict("enquiry with this email already exists")
         }
 
-        // Generate OTP for new enquiry
-        otp := generateOTP()
-        e.OTPToken = otp
+        // Generate separate OTPs for mobile and email for new enquiry
         now := time.Now()
-        e.OTPSentAt = &now
         expiresAt := now.Add(15 * time.Minute)
-        e.OTPExpiresAt = &expiresAt
+        
+        // Generate mobile OTP
+        mobileOTP := generateOTP()
+        e.MobileOTPToken = mobileOTP
+        e.MobileOTPSentAt = &now
+        e.MobileOTPExpiresAt = &expiresAt
+        e.MobileOTPVerified = false
+        log.Printf("MOBILE OTP GENERATED for %s: %s", e.MobileNumber, mobileOTP)
+        
+        // Generate email OTP
+        emailOTP := generateOTP()
+        e.EmailOTPToken = emailOTP
+        e.EmailOTPSentAt = &now
+        e.EmailOTPExpiresAt = &expiresAt
+        e.EmailOTPVerified = false
+        log.Printf("EMAIL OTP GENERATED for %s: %s", e.EmailAddress, emailOTP)
+        
         e.Status = "pending"
         e.OTPVerified = false
 
@@ -142,7 +183,6 @@ func (s *Service) SubmitEnquiry(ctx context.Context, e *domain.Enquiry) (*domain
                 log.Println("CREATE ENQUIRY FAILED:", err)
                 return nil, err
         }
-        log.Printf("OTP GENERATED for mobile %s: %s", e.MobileNumber, otp)
         return e, nil
 }
 
@@ -155,22 +195,37 @@ func (s *Service) ResendOTP(ctx context.Context, id uint) (*domain.Enquiry, erro
         if err != nil {
                 return nil, apperrors.NotFound("enquiry not found")
         }
-        if e.OTPVerified {
-                return nil, apperrors.BadRequest("OTP already verified")
+        if e.MobileOTPVerified && e.EmailOTPVerified {
+                return nil, apperrors.BadRequest("Both OTPs already verified")
         }
-        // Generate new OTP
-        otp := generateOTP()
-        e.OTPToken = otp
+        
+        // Generate separate OTPs for mobile and email
         now := time.Now()
-        e.OTPSentAt = &now
         expiresAt := now.Add(15 * time.Minute)
-        e.OTPExpiresAt = &expiresAt
+        
+        // Generate mobile OTP if not verified
+        if !e.MobileOTPVerified {
+                mobileOTP := generateOTP()
+                e.MobileOTPToken = mobileOTP
+                e.MobileOTPSentAt = &now
+                e.MobileOTPExpiresAt = &expiresAt
+                log.Printf("MOBILE OTP RESENT for %s: %s", e.MobileNumber, mobileOTP)
+        }
+        
+        // Generate email OTP if not verified
+        if !e.EmailOTPVerified {
+                emailOTP := generateOTP()
+                e.EmailOTPToken = emailOTP
+                e.EmailOTPSentAt = &now
+                e.EmailOTPExpiresAt = &expiresAt
+                log.Printf("EMAIL OTP RESENT for %s: %s", e.EmailAddress, emailOTP)
+        }
+        
         e.Status = "pending"
         if err := s.repo.UpdateEnquiry(e); err != nil {
                 log.Println("UPDATE ENQUIRY FAILED:", err)
                 return nil, err
         }
-        log.Printf("OTP RESENT for mobile %s: %s", e.MobileNumber, otp)
         return e, nil
 }
 
@@ -181,19 +236,72 @@ func (s *Service) GetEnquiryByID(ctx context.Context, id uint) (*domain.Enquiry,
         }
         return e, nil
 }
-func (s *Service) VerifyOTP(ctx context.Context, id uint, otp string) error {
+
+func (s *Service) GetEnquiryByMobile(ctx context.Context, mobileNumber string) (*domain.Enquiry, error) {
+        e, err := s.repo.GetEnquiryByMobile(mobileNumber)
+        if err != nil {
+                return nil, apperrors.NotFound("enquiry not found")
+        }
+        return e, nil
+}
+
+func (s *Service) GetEnquiryByEmail(ctx context.Context, emailAddress string) (*domain.Enquiry, error) {
+        e, err := s.repo.GetEnquiryByEmail(emailAddress)
+        if err != nil {
+                return nil, apperrors.NotFound("enquiry not found")
+        }
+        return e, nil
+}
+
+func (s *Service) GetLatestUnverifiedEnquiry(ctx context.Context) (*domain.Enquiry, error) {
+        e, err := s.repo.GetLatestUnverifiedEnquiry()
+        if err != nil {
+                return nil, apperrors.NotFound("no unverified enquiry found")
+        }
+        return e, nil
+}
+func (s *Service) VerifyOTP(ctx context.Context, id uint, otp string, otpType string) error {
         e, err := s.repo.GetEnquiryByID(id)
         if err != nil {
                 return apperrors.NotFound("enquiry not found")
         }
-        if e.OTPToken != otp {
+        
+        var storedOTP string
+        var expiresAt *time.Time
+        
+        // Determine which OTP to verify based on type
+        if otpType == "mobile" {
+                storedOTP = e.MobileOTPToken
+                expiresAt = e.MobileOTPExpiresAt
+        } else if otpType == "email" {
+                storedOTP = e.EmailOTPToken
+                expiresAt = e.EmailOTPExpiresAt
+        } else {
+                // For backward compatibility, try mobile OTP first
+                storedOTP = e.MobileOTPToken
+                expiresAt = e.MobileOTPExpiresAt
+        }
+        
+        if storedOTP != otp {
                 return apperrors.BadRequest("invalid OTP")
         }
-        if e.OTPExpiresAt != nil && time.Now().After(*e.OTPExpiresAt) {
+        if expiresAt != nil && time.Now().After(*expiresAt) {
                 return apperrors.BadRequest("OTP expired")
         }
-        e.OTPVerified = true
-        e.Status = "verified"
+        
+        // Mark the specific OTP as verified
+        if otpType == "mobile" {
+                e.MobileOTPVerified = true
+        } else if otpType == "email" {
+                e.EmailOTPVerified = true
+        }
+        
+        // Update overall status if both are verified
+        if e.MobileOTPVerified && e.EmailOTPVerified {
+                e.OTPVerified = true
+                e.Status = "verified"
+        }
+        
         return s.repo.UpdateEnquiry(e)
 }
 func (s *Service) ListEnquiries(ctx context.Context, page, pageSize int) ([]domain.Enquiry, int64, error) {

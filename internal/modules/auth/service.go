@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 
 	"university-erp-backend/internal/domain"
@@ -17,6 +18,54 @@ import (
 	"gorm.io/gorm"
 )
 
+// OTPStorage stores OTPs in memory
+type OTPStorage struct {
+	mu   sync.RWMutex
+	otps map[string]*OTPData
+}
+
+type OTPData struct {
+	OTP        string
+	Expiry     time.Time
+	Identifier string // mobile or email
+}
+
+func NewOTPStorage() *OTPStorage {
+	return &OTPStorage{
+		otps: make(map[string]*OTPData),
+	}
+}
+
+func (s *OTPStorage) Store(key, otp, identifier string, expiry time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.otps[key] = &OTPData{
+		OTP:        otp,
+		Expiry:     expiry,
+		Identifier: identifier,
+	}
+}
+
+func (s *OTPStorage) Get(key string) (*OTPData, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	data, exists := s.otps[key]
+	if !exists {
+		return nil, false
+	}
+	if time.Now().After(data.Expiry) {
+		delete(s.otps, key)
+		return nil, false
+	}
+	return data, true
+}
+
+func (s *OTPStorage) Delete(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.otps, key)
+}
+
 // Service contains auth business logic.
 type Service struct {
 	repo   *Repository
@@ -24,10 +73,11 @@ type Service struct {
 	bus    *eventbus.Bus
 	outbox *outbox.Writer
 	db     *gorm.DB
+	otpStore *OTPStorage
 }
 
 func NewService(repo *Repository, jwt *auth.JWTManager, bus *eventbus.Bus, ob *outbox.Writer, db *gorm.DB) *Service {
-	return &Service{repo: repo, jwt: jwt, bus: bus, outbox: ob, db: db}
+	return &Service{repo: repo, jwt: jwt, bus: bus, outbox: ob, db: db, otpStore: NewOTPStorage()}
 }
 
 // ─── Login ───────────────────────────────────────────────────────────────────
@@ -250,23 +300,78 @@ type OTPResendResponse struct {
 	Data any    `json:"data"`
 }
 
-func (s *Service) VerifyOTP(ctx context.Context, mobileNumber, otp string) (*OTPVerifyResponse, error) {
-	// For now, this is a placeholder for auth OTP verification
-	// In a real implementation, you would verify the OTP against a stored value
+func (s *Service) VerifyOTP(ctx context.Context, mobileNumber, email, otp string) (*OTPVerifyResponse, error) {
+	// Determine which identifier to use
+	var key string
+	var identifier string
+	if mobileNumber != "" {
+		key = "mobile:" + mobileNumber
+		identifier = mobileNumber
+	} else if email != "" {
+		key = "email:" + email
+		identifier = email
+	} else {
+		return nil, apperrors.BadRequest("mobile number or email is required")
+	}
+
+	// Get stored OTP
+	storedOTP, exists := s.otpStore.Get(key)
+	if !exists {
+		return nil, apperrors.BadRequest("OTP not found or expired")
+	}
+
+	// Verify OTP
+	if storedOTP.OTP != otp {
+		return nil, apperrors.BadRequest("invalid OTP")
+	}
+
+	// Delete OTP after successful verification
+	s.otpStore.Delete(key)
+
+	log.Printf("OTP VERIFIED for %s: %s", identifier, otp)
+
 	return &OTPVerifyResponse{
 		Success: true,
 		Message: "OTP verified successfully",
 	}, nil
 }
 
-func (s *Service) ResendOTP(ctx context.Context, mobileNumber string) (*OTPResendResponse, error) {
-	// Generate OTP
-	otp := fmt.Sprintf("%06d", 100000+rand.Intn(900000))
-	log.Printf("OTP RESENT for mobile %s: %s", mobileNumber, otp)
+func (s *Service) ResendOTP(ctx context.Context, mobileNumber, email string) (*OTPResendResponse, error) {
+	// Generate different OTPs for mobile and email
+	var mobileOTP, emailOTP string
+	var identifier string
 
-	// In a real implementation, you would store this OTP and send it via SMS
+	if mobileNumber != "" {
+		mobileOTP = fmt.Sprintf("%06d", 100000+rand.Intn(900000))
+		expiresAt := time.Now().Add(15 * time.Minute)
+		s.otpStore.Store("mobile:"+mobileNumber, mobileOTP, mobileNumber, expiresAt)
+		log.Printf("OTP GENERATED for mobile %s: %s", mobileNumber, mobileOTP)
+		identifier = mobileNumber
+	}
+
+	if email != "" {
+		emailOTP = fmt.Sprintf("%06d", 100000+rand.Intn(900000))
+		expiresAt := time.Now().Add(15 * time.Minute)
+		s.otpStore.Store("email:"+email, emailOTP, email, expiresAt)
+		log.Printf("OTP GENERATED for email %s: %s", email, emailOTP)
+		if identifier == "" {
+			identifier = email
+		}
+	}
+
+	// Return the appropriate OTP based on what was requested
+	var otpToReturn string
+	if mobileNumber != "" {
+		otpToReturn = mobileOTP
+	} else if email != "" {
+		otpToReturn = emailOTP
+	}
+
 	return &OTPResendResponse{
-		OTP:  otp,
-		Data: map[string]interface{}{"mobile_number": mobileNumber},
+		OTP:  otpToReturn,
+		Data: map[string]interface{}{
+			"mobile_number": mobileNumber,
+			"email":         email,
+		},
 	}, nil
 }
